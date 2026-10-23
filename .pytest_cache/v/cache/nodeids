@@ -1,0 +1,13 @@
+[
+  "tests/test_talaria.py::test_command_surface",
+  "tests/test_talaria.py::test_dead_writer_reads_stale",
+  "tests/test_talaria.py::test_dismiss_until_next_turn",
+  "tests/test_talaria.py::test_hooks_never_raise",
+  "tests/test_talaria.py::test_known_lists_tracked_sessions",
+  "tests/test_talaria.py::test_needs_you_after_turn",
+  "tests/test_talaria.py::test_new_turn_beats_late_classification",
+  "tests/test_talaria.py::test_parse_verdict",
+  "tests/test_talaria.py::test_question_hides_secret_prompts",
+  "tests/test_talaria.py::test_reply_to_needs_you_starts_a_new_turn",
+  "tests/test_talaria.py::test_turn_lifecycle"
+]
