@@ -68,7 +68,7 @@ A skeleton:
   <link rel="stylesheet" href="/lib/viz.css">
   <style>
     body { margin: 0; font: 15px/1.45 -apple-system, system-ui, sans-serif;
-           padding: calc(env(safe-area-inset-top) + 56px) 16px calc(env(safe-area-inset-bottom) + 24px); }
+           padding: calc(env(safe-area-inset-top) + 48px) 16px calc(env(safe-area-inset-bottom) + 16px); }
   </style>
 </head><body>
   <div id="app"></div>
@@ -127,15 +127,20 @@ colour-blind-safe palette, and light and dark modes. It looks far better than li
 
 - **Give each canvas its own identity** to fit what it's for. Choose the layout, type, colour, imagery and motion
   yourself; it does not have to look like Talaria.
-  - A full-bleed hero, a dark theme, a big display face from Google Fonts, gradients and texture are all fine when
-    they serve the content.
+  - A dark theme, a display face from Google Fonts, gradients and texture are all fine when they serve the content.
 - **It's a phone.**
   - Design for about 400pt wide, one column.
   - Make thumb-sized targets (44pt or more).
   - Never scroll sideways.
+- **Keep it compact.** Phones reward density; air is for separating groups, not filling the screen.
+  - Gaps of 8–12px between items and 16–20px between sections; card padding 12–14px; 16px side margins.
+  - Body text 15–16px, labels 12–13px. A headline over 28px only when it's the point of the page.
+  - Show the useful content in the first screenful: no tall hero or banner unless the request calls for one,
+    and then keep it under about a third of the screen.
 - **It runs edge to edge under Talaria's floating top bar.**
   - Keep `viewport-fit=cover`.
-  - Pad the top by `env(safe-area-inset-top)` plus about 56px, and the bottom by `env(safe-area-inset-bottom)`.
+  - Start the content right under the top bar: pad the top by `env(safe-area-inset-top)` plus 48px (the bar's
+    buttons), no more; the bottom by `env(safe-area-inset-bottom)` plus 16px.
   - A background, though, should run to the edges.
 - **Support light and dark** with `prefers-color-scheme`, unless the design is deliberately one or the other.
 - **Make it feel alive.**
