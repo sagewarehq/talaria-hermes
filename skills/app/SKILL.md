@@ -1,7 +1,7 @@
 ---
 name: app
 description: "Use when the user asks for an app, or for a dashboard, tracker, planner, report, tool or any page or small app to look at in Talaria (their iPhone app). Covers where apps live, the libraries Talaria has built in, how to design one, and how to hand it back so it opens in the app."
-version: 1.2.0
+version: 1.1.0
 author: Sageware Solutions Inc.
 metadata:
   hermes:
@@ -47,8 +47,7 @@ Talaria's Back button (and the edge swipe) walks back through them before it lea
 
 ## Hand it back
 
-Once you've looked at it (see "Look at it before you hand it back" below), end your reply with the app's page on a
-line of its own, so Talaria shows a card that opens it:
+End your reply with the app's page on a line of its own, so Talaria shows a card that opens it:
 
     MEDIA:/root/.hermes/talaria/apps/<name>/index.html
 
@@ -173,36 +172,7 @@ colour-blind-safe palette, and light and dark modes. It looks far better than li
   - Put real data in JSON files beside the page, and have the page read them.
   - When it should stay current, offer to set up a routine (a cron job) that refreshes the JSON, so the app
     stays live without being rebuilt.
-
-## Look at it before you hand it back
-
-Don't stop when the files are written. An app isn't done until you've seen it on a phone-sized screen and it looks
-right. Every time you build or change one:
-
-1. **Start the preview.** It serves the app the way Talaria does, with the same built-in libraries:
-
-       python3 ~/.hermes/plugins/talaria/preview.py <name>
-
-   It prints two addresses: `phone:` frames the app at iPhone size, between a drawn status bar and home
-   indicator, under Talaria's floating Back and ⋯ buttons; `alone:` is the app by itself. The server keeps
-   running, so later calls return at once.
-2. **Look at it.** Open the `phone:` address with `browser_navigate`, then use `browser_vision` and ask about it
-   critically, as the user would see it:
-   - Does anything overflow, get cut off, overlap, or scroll sideways?
-   - Does the content start right under the floating buttons, with nothing hidden behind them?
-   - Is the text legible, and are the targets thumb-sized?
-   - Do the charts and data show real values, with no blank panels, `NaN` or `undefined`?
-   - Does it look intentional and finished, or like a rough draft?
-   Scroll and look again when the page is longer than one screen.
-3. **Check for errors.** Open the `alone:` address and read `browser_console`. Fix every error and failed
-   request.
-4. **Go through every page you built or changed.** Frame a subpage with `/__phone/<page>` (for example
-   `http://<name>.localhost:8797/__phone/trip.html`), and click the main interactions (tabs, filters, sheets)
-   with the browser tools.
-5. **Fix what you find, then look again.** Repeat until there is nothing left to fix. Only then hand it back.
-
-In your reply, say briefly what you checked and anything you fixed after looking. If the preview can't start or
-the browser can't reach it, say so plainly; don't claim it looked fine. Also make sure, before you look:
-- Every file you reference exists.
-- The HTML is complete.
-- Module scripts parse: `node --check` on any `.js` you wrote.
+- **Check your work** before handing it back:
+  - Every file you reference exists.
+  - The HTML is complete.
+  - Module scripts parse: `node --check` on any `.js` you wrote.
