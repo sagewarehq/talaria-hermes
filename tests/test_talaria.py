@@ -177,3 +177,50 @@ def test_moves_canvases_to_apps(talaria):
     assert not (root / "canvases").exists()
     talaria.move_canvases()  # once: nothing left to move
     assert (root / "apps" / "trips").is_dir()
+
+
+def test_preview_serves_an_app_like_the_phone(tmp_path, monkeypatch):
+    """preview.py: each app on its own origin, the import map injected, folders and routes resolved, nothing
+    outside the app's folder."""
+    import importlib.util, threading, urllib.request
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("talaria_preview", root / "preview.py")
+    preview = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preview)
+    app = tmp_path / "talaria" / "apps" / "trips"
+    (app / "cebu").mkdir(parents=True)
+    (app / "index.html").write_text("<html><head><title>Trips</title></head><body>home</body></html>")
+    (app / "cebu" / "index.html").write_text("<html><head></head><body>cebu</body></html>")
+    (app / "data.json").write_text('{"ok": true}')
+    (tmp_path / "talaria" / "attention.db").write_text("secret")
+    monkeypatch.setattr(preview, "apps_root", lambda: tmp_path / "talaria" / "apps")
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "viz.js").write_text("export const x = 1")
+    monkeypatch.setattr(preview, "LIB", lib)
+    server = preview.http.server.ThreadingHTTPServer(("127.0.0.1", 0), preview.Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+
+    def get(path, host="trips.localhost"):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"Host": f"{host}:{port}"})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, r.headers["Content-Type"], r.read().decode()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers["Content-Type"], ""
+
+    try:
+        status, kind, body = get("/")
+        assert status == 200 and kind.startswith("text/html") and '<script type="importmap">' in body and "home" in body
+        assert "cebu" in get("/cebu/")[2]
+        assert get("/data.json")[1] == "application/json"
+        assert "home" in get("/settings/42")[2]  # a route that isn't a file: the app's first page
+        assert get("/lib/viz.js")[2] == "export const x = 1"
+        assert get("/../attention.db")[0] == 404
+        assert get("/x", host="..localhost")[0] == 404
+        status, _, frame = get("/__phone/")
+        assert status == 200 and 'src="/"' in frame and "402px" in frame
+        assert 'src="/cebu/"' in get("/__phone/cebu/")[2]
+    finally:
+        server.shutdown()

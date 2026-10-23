@@ -23,7 +23,7 @@ from . import store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.2.3"
+VERSION = "0.2.4"
 
 
 def _safe(fn):
