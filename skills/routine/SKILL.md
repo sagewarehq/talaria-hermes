@@ -32,8 +32,8 @@ schedule, its last and next run, and a session for every run. Set it up with you
   - Results should land where the user will see them. Use this chat's origin unless they name another place.
   - For routines that only matter when something's off, have the run say so plainly in its first line, and keep
     quiet otherwise.
-- **Canvases.** When the routine keeps a Talaria canvas current (`~/.hermes/talaria/canvases/<name>/`), have it
-  rewrite that canvas's JSON data files, not its page, so the canvas stays live without being rebuilt.
+- **Apps.** When the routine keeps a Talaria app current (`~/.hermes/talaria/apps/<name>/`), have it
+  rewrite that app's JSON data files, not its page, so the app stays live without being rebuilt.
 
 ## After creating it
 

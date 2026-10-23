@@ -1,5 +1,5 @@
 name: talaria
-version: 0.2.1
+version: 0.2.3
 description: "Server-side companion for the Talaria iPhone app: records each session's attention state (running, waiting on an approval or question, needs you) across every Hermes backend, and serves it via /talaria; and the canvas and routine skills (/talaria:canvas, /talaria:routine)."
 author: "Sageware Solutions Inc."
 provides_hooks:

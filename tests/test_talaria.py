@@ -152,7 +152,7 @@ def test_dismiss_an_untracked_session(talaria):
     assert inbox(talaria)[0]["state"] == "running"
 
 
-def test_registers_the_canvas_skill(talaria):
+def test_registers_the_app_skill(talaria):
     class Ctx:
         def __init__(self): self.skills, self.hooks, self.commands = {}, [], []
         def register_hook(self, name, fn): self.hooks.append(name)
@@ -160,9 +160,20 @@ def test_registers_the_canvas_skill(talaria):
         def register_skill(self, name, path, description=""): self.skills[name] = (Path(path), description)
     ctx = Ctx()
     talaria.register(ctx)
-    path, description = ctx.skills["canvas"]
+    path, description = ctx.skills["app"]
     text = path.read_text()
-    assert text.startswith("---\nname: canvas\n") and description
-    assert "MEDIA:/root/.hermes/talaria/canvases/" in text  # how Talaria knows to show the canvas card
+    assert text.startswith("---\nname: app\n") and description
+    assert "MEDIA:/root/.hermes/talaria/apps/" in text  # how Talaria knows to show the app card
     path, _ = ctx.skills["routine"]
     assert path.read_text().startswith("---\nname: routine\n")
+
+
+def test_moves_canvases_to_apps(talaria):
+    root = talaria.store.home() / "talaria"
+    (root / "canvases" / "trips").mkdir(parents=True)
+    (root / "canvases" / "trips" / "index.html").write_text("<title>Trips</title>")
+    talaria.move_canvases()
+    assert (root / "apps" / "trips" / "index.html").read_text() == "<title>Trips</title>"
+    assert not (root / "canvases").exists()
+    talaria.move_canvases()  # once: nothing left to move
+    assert (root / "apps" / "trips").is_dir()

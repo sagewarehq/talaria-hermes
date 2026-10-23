@@ -1,43 +1,63 @@
 ---
-name: canvas
-description: "Use when the user asks for a canvas, or for a dashboard, tracker, planner, report, tool or any page or small app to look at in Talaria (their iPhone app). Covers where canvases live, the libraries Talaria has built in, how to design one, and how to hand it back so it opens in the app."
-version: 1.0.0
+name: app
+description: "Use when the user asks for an app, or for a dashboard, tracker, planner, report, tool or any page or small app to look at in Talaria (their iPhone app). Covers where apps live, the libraries Talaria has built in, how to design one, and how to hand it back so it opens in the app."
+version: 1.1.0
 author: Sageware Solutions Inc.
 metadata:
   hermes:
-    tags: [talaria, canvas, web, dashboard, ui, charts]
+    tags: [talaria, app, web, dashboard, ui, charts]
 ---
 
-# Talaria canvases
+# Talaria apps
 
-A canvas is a small web app the user opens full screen in Talaria, their iPhone app for Hermes. It's yours to
+An app is a small web app the user opens full screen in Talaria, their iPhone app for Hermes. It's yours to
 build and rebuild freely, and it can be anything a web page can be: a live dashboard, a tracker, a planner, a
-report, a game, a control panel. Be ambitious. A canvas is a whole app, not a widget.
+report, a game, a control panel. Be ambitious. An app is a whole app, not a widget.
 
 ## Where it lives
 
-Each canvas is a folder on this machine:
+Each app is a folder on this machine:
 
-    ~/.hermes/talaria/canvases/<name>/index.html
+    ~/.hermes/talaria/apps/<name>/index.html
 
 - `<name>` is short kebab-case (`spending`, `hiring-pipeline`, `cebu-trip`). Create the folders if they're missing.
-- `index.html` is the entry. Put anything else beside it: ES modules, components, CSS, images, and JSON data.
-  Everything loads by relative path (`./app.js`, `fetch('./data.json')`).
-- The page's `<title>` is the canvas's name in the app. Keep it short.
-- To change a canvas, edit its folder in place; `ls ~/.hermes/talaria/canvases` lists them all. To delete one,
+- `index.html` is the entry. Put anything else beside it: more pages, ES modules, components, CSS, images, and
+  JSON data. Everything loads by path within the folder (`./app.js`, `fetch('/data.json')`).
+- The page's `<title>` is the app's name in Talaria. Keep it short.
+- To change an app, edit its folder in place; `ls ~/.hermes/talaria/apps` lists them all. To delete one,
   remove its folder.
+
+## Pages and state
+
+An app can have as many pages as it needs. Talaria is its browser: links between its pages open in place, and
+Talaria's Back button (and the edge swipe) walks back through them before it leaves the app.
+
+- **Pages are files.** `trip.html` beside `index.html`, or a folder with its own `index.html`. Link them with
+  relative hrefs: `<a href="./trip.html#tokyo">`, `<a href="./cebu/">` (keep the trailing slash on a folder).
+- **`/` is the app's root** on every page, so a nested page reaches shared files as `fetch('/data.json')`,
+  `import '/app.js'` and `<link href="/style.css">`. Use these root paths for anything more than one page shares.
+- **One-page apps work too.** Route with the hash (`#/settings`, `#/trip/tokyo`); each route counts as a page for
+  Back. The History API works as well: a reload of a route that isn't a file serves the root `index.html`, so
+  load its scripts and styles by root paths.
+- **Each app keeps its own state.** `localStorage` and IndexedDB persist on the phone between launches, shared
+  by every page of that app and private to it. Use them for what the user does on the phone: checked items,
+  filters, drafts, the last tab. That state stays on the phone; data that Hermes or a routine writes belongs in the
+  app's JSON files.
+- Give each page its own `<title>`, and lay out every page under the top bar like the first (below).
 
 ## Hand it back
 
-End your reply with the canvas's page on a line of its own, so Talaria shows a card that opens it:
+End your reply with the app's page on a line of its own, so Talaria shows a card that opens it:
 
-    MEDIA:/root/.hermes/talaria/canvases/<name>/index.html
+    MEDIA:/root/.hermes/talaria/apps/<name>/index.html
 
-Use the absolute path. Before the card, say in a sentence or two what you built or changed.
+Use the absolute path. When the change is on one page, hand back that page instead
+(`MEDIA:/root/.hermes/talaria/apps/<name>/trip.html`) and the card opens straight to it. Before the card, say
+in a sentence or two what you built or changed.
 
 ## What's built in
 
-Talaria serves these from the app itself, offline, with no build step. It adds an import map to every canvas page,
+Talaria serves these from itself, offline, with no build step. It adds an import map to every app page,
 so `<script type="module">` can import them by name:
 
 | import | what |
@@ -118,14 +138,14 @@ colour-blind-safe palette, and light and dark modes. It looks far better than li
 - **Colours:** `setChartTheme(name)` picks a set: `datagen` (the default), `ocean`, `nordic`, `forest`, `earth`,
   `sunset`, `berry`, `candy`, `pastel`, `retro`, `neon`, `vivid`, `ink` or `classic`. For colours of your own,
   pass `setChartTheme(defineChartTheme({ label, description, light: { series: [8 colours] }, dark: { series: [...] } }))`.
-- **Matching your design:** the charts read CSS variables, so a canvas restyles them by setting these:
+- **Matching your design:** the charts read CSS variables, so an app restyles them by setting these:
   - `--surface`, `--border`, `--text`, `--text-muted` and `--bg`
   - `--series-1` … `--series-8`, `--chart-grid` and `--chart-axis`
 - Reach for d3 when you need something `viz` doesn't draw: maps, networks, calendars, radial charts.
 
 ## Design
 
-- **Give each canvas its own identity** to fit what it's for. Choose the layout, type, colour, imagery and motion
+- **Give each app its own identity** to fit what it's for. Choose the layout, type, colour, imagery and motion
   yourself; it does not have to look like Talaria.
   - A dark theme, a display face from Google Fonts, gradients and texture are all fine when they serve the content.
 - **It's a phone.**
@@ -139,8 +159,9 @@ colour-blind-safe palette, and light and dark modes. It looks far better than li
     and then keep it under about a third of the screen.
 - **It runs edge to edge under Talaria's floating top bar.**
   - Keep `viewport-fit=cover`.
-  - Start the content right under the top bar: pad the top by `env(safe-area-inset-top)` plus 48px (the bar's
-    buttons), no more; the bottom by `env(safe-area-inset-bottom)` plus 16px.
+  - Start the content right under the top bar: pad the top by `env(safe-area-inset-top)` (the status bar) plus
+    48px (the bar's buttons), no more, and give the first heading no top margin; pad the bottom by
+    `env(safe-area-inset-bottom)` plus 16px.
   - A background, though, should run to the edges.
 - **Support light and dark** with `prefers-color-scheme`, unless the design is deliberately one or the other.
 - **Make it feel alive.**
@@ -149,7 +170,7 @@ colour-blind-safe palette, and light and dark modes. It looks far better than li
   - Use real interactions (tabs, filters, sheets, drag) over static text.
 - **Data:**
   - Put real data in JSON files beside the page, and have the page read them.
-  - When it should stay current, offer to set up a routine (a cron job) that refreshes the JSON, so the canvas
+  - When it should stay current, offer to set up a routine (a cron job) that refreshes the JSON, so the app
     stays live without being rebuilt.
 - **Check your work** before handing it back:
   - Every file you reference exists.

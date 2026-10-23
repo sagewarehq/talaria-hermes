@@ -23,7 +23,7 @@ from . import store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.2.1"
+VERSION = "0.2.3"
 
 
 def _safe(fn):
@@ -207,6 +207,16 @@ def handle_command(raw_args: str = "") -> str:
     return f"{USAGE} (got {args!r})"
 
 
+def move_canvases() -> None:
+    """Apps were "canvases" before 0.2.3: move their folder to its new name, once."""
+    old, new = store.home() / "talaria" / "canvases", store.home() / "talaria" / "apps"
+    try:
+        if old.is_dir() and not new.exists():
+            old.rename(new)
+    except OSError:
+        pass
+
+
 def register(ctx) -> None:
     for name, fn in (("on_session_start", on_session_start), ("pre_llm_call", pre_llm_call),
                      ("on_session_end", on_session_end),
@@ -215,12 +225,13 @@ def register(ctx) -> None:
                      ("on_human_input_request", on_human_input_request),
                      ("on_human_input_resolved", on_human_input_resolved)):
         ctx.register_hook(name, fn)
-    # Skills, as /talaria:canvas and /talaria:routine: how to build a canvas Talaria opens, and how to set
+    # Skills, as /talaria:app and /talaria:routine: how to build an app Talaria opens, and how to set
     # up a routine that reads well in its Routines list (skills/*/SKILL.md).
     from pathlib import Path
     skills = Path(__file__).parent / "skills"
-    ctx.register_skill("canvas", skills / "canvas" / "SKILL.md",
-                       description="Build or change a Talaria canvas: a small web app the user opens full screen in Talaria.")
+    move_canvases()
+    ctx.register_skill("app", skills / "app" / "SKILL.md",
+                       description="Build or change a Talaria app: a small web app the user opens full screen in Talaria.")
     ctx.register_skill("routine", skills / "routine" / "SKILL.md",
                        description="Set up a routine: a cron job that reads well in Talaria's Routines list.")
     ctx.register_command("talaria", handler=handle_command,
