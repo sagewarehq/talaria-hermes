@@ -65,14 +65,14 @@ def on_session_end(session_id: str = "", turn_id: str = "", platform: str = "", 
 # MARK: needs-you classification
 
 CLASSIFY_PROMPT = (
-    "You read the last message an AI assistant sent to its principal, Jesse, at the end of a turn. "
-    "Decide whether the conversation is now waiting on Jesse to do or decide something: answer a "
+    "You read the last message an AI assistant sent to the user it works for, at the end of a turn. "
+    "Decide whether the conversation is now waiting on the user to do or decide something: answer a "
     "question, approve or choose, provide information, review or upload a file, make a payment, "
-    "confirm with someone, etc. Finished work that still needs his review or go-ahead before it "
-    "ships, merges, deploys, or is sent counts as waiting on him (e.g. \"ready to ship\", \"PR is up "
+    "confirm with someone, etc. Finished work that still needs their review or go-ahead before it "
+    "ships, merges, deploys, or is sent counts as waiting on them (e.g. \"ready to ship\", \"PR is up "
     "for review\", \"draft ready to send\"). Purely informational reports, and work that is already "
-    "shipped or complete with nothing left for him, do not wait on him. "
-    'Reply with JSON only: {"needs_you": true|false, "next": "<what Jesse should do, imperative, '
+    "shipped or complete with nothing left for them, do not wait on them. "
+    'Reply with JSON only: {"needs_you": true|false, "next": "<what the user should do, imperative, '
     'at most 10 words, empty if needs_you is false>"}'
 )
 

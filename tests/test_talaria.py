@@ -129,7 +129,7 @@ def test_new_turn_beats_late_classification(talaria, monkeypatch):
     monkeypatch.setattr(talaria.store, "last_assistant_text", lambda sid: "Want me to process these three requests?")
     talaria.on_session_start(session_id="s8")
     talaria.store.set_state("s8", "idle")
-    talaria.on_session_start(session_id="s8")          # Jesse already replied: a new turn is running
+    talaria.on_session_start(session_id="s8")          # the user already replied: a new turn is running
     monkeypatch.setattr(talaria, "classify", lambda text: (True, "Reply"))
     talaria._classify_turn("s8", "t1")
     assert inbox(talaria)[0]["state"] == "running"

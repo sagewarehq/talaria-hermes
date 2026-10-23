@@ -155,7 +155,7 @@ DONE_MAX_AGE_S = 24 * 3600
 
 def inbox(conn: Optional[sqlite3.Connection] = None, *, max_age_s: float = 3 * 86400) -> list[dict[str, Any]]:
     """Rows worth showing: live turns (running / approval / question), turns that died mid-flight
-    (stale), finished turns that left Jesse something to do (needs_you), and other turns that
+    (stale), finished turns that left the user something to do (needs_you), and other turns that
     finished in the last day (done; not cron runs, which finish all day). Dismissed rows stay
     hidden until their session's next turn."""
     own = conn is None
