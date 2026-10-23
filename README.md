@@ -1,4 +1,4 @@
-# hermes-talaria
+# talaria-hermes
 
 The Hermes plugin for [Talaria](https://github.com/sagewarehq), the iPhone app for Hermes.
 
@@ -10,7 +10,7 @@ The Hermes plugin for [Talaria](https://github.com/sagewarehq), the iPhone app f
 Install from Talaria (Canvas or Inbox → Install), or on the server:
 
 ```bash
-hermes plugins install sagewarehq/hermes-talaria --enable --yes-deps
+hermes plugins install sagewarehq/talaria-hermes --enable --yes-deps
 ```
 
 Source of truth: `server/hermes-plugin-talaria` in the Talaria repo.
