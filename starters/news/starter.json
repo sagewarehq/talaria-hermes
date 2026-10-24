@@ -1,0 +1,7 @@
+{
+  "shared": "newsroom",
+  "venv": "newsroom",
+  "requirements": [
+    "trafilatura==2.3.1"
+  ]
+}

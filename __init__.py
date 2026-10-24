@@ -23,7 +23,7 @@ from . import store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.2.4"
+VERSION = "0.4.0"
 
 
 def _safe(fn):
@@ -177,7 +177,28 @@ def on_human_input_resolved(session_id: str = "", **_: Any) -> None:
         store.set_state(session_id, "running")
 
 
-USAGE = "usage: /talaria version | whoami | inbox [--json] | dismiss <session_id> | classify <session_id>"
+USAGE = ("usage: /talaria version | whoami | inbox [--json] | apps | open <app> | action <app> <name> [base64 json]"
+         " | dismiss <session_id> | classify <session_id>")
+
+
+def list_apps() -> list[dict[str, Any]]:
+    """Every app in ``talaria/apps/``, newest first: its folder name, its index page's ``<title>``, when it last
+    changed. For the Desktop plugin, which can't list folders on the box itself."""
+    root = store.home() / "talaria" / "apps"
+    apps = []
+    for d in root.iterdir() if root.is_dir() else ():
+        index = d / "index.html"
+        if not index.is_file():
+            continue
+        title = None
+        try:
+            m = re.search(r"<title[^>]*>([^<]*)</title>", index.read_text(encoding="utf-8", errors="replace")[:20000], re.I)
+            title = " ".join(m.group(1).split()) or None if m else None
+        except OSError:
+            pass
+        updated = max((f.stat().st_mtime for f in d.rglob("*") if f.is_file()), default=index.stat().st_mtime)
+        apps.append({"name": d.name, "title": title, "folder": str(d), "updated": updated})
+    return sorted(apps, key=lambda a: a["updated"], reverse=True)
 
 
 def handle_command(raw_args: str = "") -> str:
@@ -197,6 +218,22 @@ def handle_command(raw_args: str = "") -> str:
         if not rows:
             return "Nothing running or waiting."
         return "\n".join(f"{r['state']:<9} {r.get('title') or r['session_id']}  {r.get('reason') or ''}".rstrip() for r in rows)
+    if sub == "apps":
+        return store.to_json({"apps": list_apps()})
+    if sub == "open" and len(args) == 2:  # Hermes Desktop forwards this port over its SSH connection
+        from . import preview
+        try:
+            return store.to_json({"port": preview.serve_app(args[1])})
+        except (LookupError, OSError) as e:
+            return store.to_json({"error": str(e)})
+    if sub == "action" and len(args) in (3, 4):  # an app's page running one of its declared scripts
+        import base64
+        from . import actions
+        try:
+            request = base64.b64decode(args[3], validate=True) if len(args) == 4 else b"null"
+        except ValueError:
+            return actions.failed("The request isn't base64.")
+        return actions.run(store.home() / "talaria" / "apps", args[1], args[2], request)
     if sub == "dismiss" and len(args) == 2:
         return store.to_json({"dismissed": store.dismiss(args[1])})
     if sub == "classify" and len(args) == 2:  # debugging: run the needs-you check on a session now
@@ -205,6 +242,31 @@ def handle_command(raw_args: str = "") -> str:
         except Exception as e:
             return store.to_json({"error": f"{type(e).__name__}: {e}"[:300]})
     return f"{USAGE} (got {args!r})"
+
+
+def start_starters() -> None:
+    """Install the apps Talaria ships with (starters/, e.g. Newsroom) once, in the background: build.py --starters,
+    detached, since a CLI one-shot that loaded the plugin may exit long before npm finishes. Cheap when there's
+    nothing to do: one file read."""
+    from pathlib import Path
+    import shutil
+    import subprocess
+    import sys
+    here = Path(__file__).resolve().parent
+    names = {p.parent.name for p in (here / "starters").glob("*/starter.json")}
+    try:
+        done = set(json.loads((store.home() / "talaria" / "starters.json").read_text()))
+    except (OSError, ValueError):
+        done = set()
+    if not names - done or os.environ.get("TALARIA_NO_STARTERS"):
+        return
+    if not (shutil.which("node") or (store.home() / "node" / "bin" / "node").exists()):
+        return  # build.py would only say it needs Node.js
+    try:
+        subprocess.Popen([sys.executable, str(here / "build.py"), "--starters"], start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
 
 
 def move_canvases() -> None:
@@ -230,10 +292,11 @@ def register(ctx) -> None:
     from pathlib import Path
     skills = Path(__file__).parent / "skills"
     move_canvases()
+    start_starters()
     ctx.register_skill("app", skills / "app" / "SKILL.md",
                        description="Build or change a Talaria app: a small web app the user opens full screen in Talaria.")
     ctx.register_skill("routine", skills / "routine" / "SKILL.md",
                        description="Set up a routine: a cron job that reads well in Talaria's Routines list.")
     ctx.register_command("talaria", handler=handle_command,
                          description="Talaria attention feed: running / waiting sessions across backends.",
-                         args_hint="version | whoami | inbox [--json] | dismiss <id>")
+                         args_hint="version | whoami | inbox [--json] | apps | open <app> | action <app> <name> | dismiss <id>")

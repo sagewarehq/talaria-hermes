@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "types": ["vite/client"],
+    "paths": {
+      "@shared/*": ["./shared/*"],
+      "viz": ["./talaria/viz/entry.ts"],
+      "talaria": ["./talaria/sdk.ts"]
+    }
+  },
+  "include": ["apps", "shared", "talaria/viz", "talaria/sdk.ts"]
+}

@@ -1,0 +1,106 @@
+{
+  "Artificial Intelligence": [
+    {
+      "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+      "title": "TechCrunch AI"
+    },
+    {
+      "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+      "title": "The Verge AI"
+    },
+    {
+      "url": "https://openai.com/news/rss.xml",
+      "title": "OpenAI"
+    },
+    {
+      "url": "https://huggingface.co/blog/feed.xml",
+      "title": "Hugging Face"
+    },
+    {
+      "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed",
+      "title": "MIT Technology Review AI"
+    },
+    {
+      "url": "https://blog.google/technology/ai/rss/",
+      "title": "Google AI"
+    }
+  ],
+  "Technology": [
+    {
+      "url": "https://www.theverge.com/rss/index.xml",
+      "title": "The Verge"
+    },
+    {
+      "url": "https://feeds.arstechnica.com/arstechnica/index",
+      "title": "Ars Technica"
+    },
+    {
+      "url": "https://www.wired.com/feed/rss",
+      "title": "Wired"
+    },
+    {
+      "url": "https://techcrunch.com/feed/",
+      "title": "TechCrunch"
+    }
+  ],
+  "Cybersecurity": [
+    {
+      "url": "https://www.bleepingcomputer.com/feed/",
+      "title": "BleepingComputer"
+    },
+    {
+      "url": "https://krebsonsecurity.com/feed/",
+      "title": "Krebs on Security"
+    },
+    {
+      "url": "https://feeds.feedburner.com/TheHackersNews",
+      "title": "The Hacker News"
+    },
+    {
+      "url": "https://www.darkreading.com/rss.xml",
+      "title": "Dark Reading"
+    }
+  ],
+  "Developer & Engineering": [
+    {
+      "url": "https://hnrss.org/frontpage",
+      "title": "Hacker News"
+    },
+    {
+      "url": "https://github.blog/feed/",
+      "title": "The GitHub Blog"
+    },
+    {
+      "url": "https://feed.infoq.com/",
+      "title": "InfoQ"
+    },
+    {
+      "url": "https://blog.cloudflare.com/rss/",
+      "title": "Cloudflare Blog"
+    }
+  ],
+  "Fintech": [
+    {
+      "url": "https://techcrunch.com/category/fintech/feed/",
+      "title": "TechCrunch Fintech"
+    },
+    {
+      "url": "https://www.finextra.com/rss/headlines.aspx",
+      "title": "Finextra"
+    }
+  ],
+  "Startups": [
+    {
+      "url": "https://techcrunch.com/category/startups/feed/",
+      "title": "TechCrunch Startups"
+    },
+    {
+      "url": "https://news.crunchbase.com/feed/",
+      "title": "Crunchbase News"
+    },
+    {
+      "url": "https://sifted.eu/feed",
+      "title": "Sifted"
+    }
+  ]
+}

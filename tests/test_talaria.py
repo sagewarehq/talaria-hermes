@@ -5,9 +5,12 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
+
+os.environ.setdefault("TALARIA_NO_STARTERS", "1")  # loading the plugin mustn't install Newsroom in a test
 
 
 @pytest.fixture()
@@ -179,6 +182,32 @@ def test_moves_canvases_to_apps(talaria):
     assert (root / "apps" / "trips").is_dir()
 
 
+def test_lists_apps_newest_first(talaria):
+    root = talaria.store.home() / "talaria" / "apps"
+    for name, title, mtime in (("trips", "<title> Trip\n planner </title>", 100), ("budget", "<h1>no title</h1>", 200)):
+        (root / name).mkdir(parents=True)
+        (root / name / "index.html").write_text(title)
+        os.utime(root / name / "index.html", (mtime, mtime))
+    (root / "half-built").mkdir()  # no index page: not an app yet
+    apps = json.loads(talaria.handle_command("apps"))["apps"]
+    assert [(a["name"], a["title"], a["updated"]) for a in apps] == [("budget", None, 200), ("trips", "Trip planner", 100)]
+
+
+def test_open_serves_an_app_on_its_own_port(talaria):
+    import urllib.request
+    app = talaria.store.home() / "talaria" / "apps" / "trips"
+    app.mkdir(parents=True)
+    (app / "index.html").write_text("<html><head><title>Trips</title></head><body>home</body></html>")
+    (app / "data.json").write_text('{"ok": true}')
+    port = json.loads(talaria.handle_command("open trips"))["port"]
+    get = lambda path: urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5).read().decode()
+    assert "importmap" in get("/") and "home" in get("/trips/42")  # the root is the app, routes fall back to it
+    assert get("/data.json") == '{"ok": true}'
+    assert json.loads(talaria.handle_command("open trips"))["port"] == port  # one server per app, reused
+    assert "error" in json.loads(talaria.handle_command("open nope"))
+    assert "error" in json.loads(talaria.handle_command("open ../trips"))
+
+
 def test_preview_serves_an_app_like_the_phone(tmp_path, monkeypatch):
     """preview.py: each app on its own origin, the import map injected, folders and routes resolved, nothing
     outside the app's folder."""
@@ -217,6 +246,7 @@ def test_preview_serves_an_app_like_the_phone(tmp_path, monkeypatch):
         assert get("/data.json")[1] == "application/json"
         assert "home" in get("/settings/42")[2]  # a route that isn't a file: the app's first page
         assert get("/lib/viz.js")[2] == "export const x = 1"
+        assert get("/__talaria")[2] == f"talaria-preview {preview.STAMP} {os.getpid()}"
         assert get("/../attention.db")[0] == 404
         assert get("/x", host="..localhost")[0] == 404
         status, _, frame = get("/__phone/")
@@ -224,3 +254,396 @@ def test_preview_serves_an_app_like_the_phone(tmp_path, monkeypatch):
         assert 'src="/cebu/"' in get("/__phone/cebu/")[2]
     finally:
         server.shutdown()
+
+
+def test_preview_compiles_jsx_and_tsx_like_the_phone(tmp_path, monkeypatch):
+    """preview.py: .jsx, .tsx and .ts come back as JavaScript, compiled by the same lib/compile.js the app runs; a
+    file that doesn't compile comes back as a module that throws, naming the line; no node says so."""
+    import importlib.util, shutil, threading, urllib.request
+    root = Path(__file__).resolve().parents[1]
+    lib = next((d for d in (root / "lib", root.parents[1] / "Talaria" / "Canvas" / "lib") if (d / "compile.js").is_file()), None)
+    if lib is None or not shutil.which("node"):
+        pytest.skip("needs node and lib/compile.js")
+    spec = importlib.util.spec_from_file_location("talaria_preview_jsx", root / "preview.py")
+    preview = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preview)
+    app = tmp_path / "apps" / "trips"
+    app.mkdir(parents=True)
+    (app / "index.html").write_text("<html><head></head><body></body></html>")
+    (app / "App.tsx").write_text("type P = { n: number }\nexport default function App({ n }: P) { return <p>{n}</p> }\n")
+    (app / "main.jsx").write_text("export default function A() { return <div>\n  <b>\n</div> }\nexport const x = 1\n")
+    (app / "util.ts").write_text("export const twice = (x: number): number => x * 2\n")
+    monkeypatch.setattr(preview, "apps_root", lambda: tmp_path / "apps")
+    monkeypatch.setattr(preview, "LIB", lib)
+    server = preview.http.server.ThreadingHTTPServer(("127.0.0.1", 0), preview.Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+
+    def get(path):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"Host": f"trips.localhost:{port}"})
+        with urllib.request.urlopen(req) as r:
+            return r.headers["Content-Type"], r.read().decode()
+
+    try:
+        kind, body = get("/App.tsx")
+        assert kind == "text/javascript" and 'from "react/jsx-runtime"' in body and ": P" not in body
+        assert get("/util.ts") == ("text/javascript", "export const twice = (x) => x * 2\n")
+        broken = get("/main.jsx")[1]  # throws, but still links for a page that imports its exports
+        assert broken.startswith('throw new SyntaxError("/main.jsx:3:')
+        assert "export default undefined" in broken and "export const x = undefined" in broken
+        (app / "main.jsx").write_text("export default <i>fixed</i>\n")  # an edit is compiled again
+        assert "fixed" in get("/main.jsx")[1] and "throw" not in get("/main.jsx")[1]
+        preview._compiler.kill()
+        preview._compiler = None
+        monkeypatch.setattr(preview.shutil, "which", lambda _: None)
+        (app / "util.ts").write_text("export const one = 1\n")
+        assert "need Node.js" in get("/util.ts")[1]
+    finally:
+        server.shutdown()
+        if preview._compiler:
+            preview._compiler.kill()
+
+
+def test_preview_replaces_a_server_from_an_older_copy(monkeypatch):
+    """preview.py: a server that answers with another stamp (started before a plugin update) is stopped, so the
+    new code serves; one with the same stamp is left alone."""
+    import importlib.util, socket, textwrap
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("talaria_preview_stale", root / "preview.py")
+    preview = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preview)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    monkeypatch.setattr(preview, "PORT", port)
+
+    def fake(stamp):
+        code = textwrap.dedent(f"""
+            import http.server, os
+            class H(http.server.BaseHTTPRequestHandler):
+                def log_message(self, *a): pass
+                def do_GET(self):
+                    body = f"talaria-preview {stamp} {{os.getpid()}}".encode()
+                    self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+                    self.wfile.write(body)
+            http.server.HTTPServer(("127.0.0.1", {port}), H).serve_forever()""")
+        proc = subprocess.Popen([sys.executable, "-c", code])
+        for _ in range(50):
+            if preview.ping():
+                return proc
+            time.sleep(0.1)
+        proc.kill()
+        raise AssertionError("fake server didn't start")
+
+    current = fake(preview.STAMP)
+    try:
+        preview.stop_stale()
+        assert preview.running() and current.poll() is None
+    finally:
+        current.kill()
+        current.wait()
+    old = fake("0ld")
+    try:
+        assert not preview.running()
+        preview.stop_stale()
+        assert old.wait(timeout=5) is not None and preview.ping() == ""
+    finally:
+        old.kill()
+
+
+def load_build(tmp_path, monkeypatch):
+    import importlib.util
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    spec = importlib.util.spec_from_file_location("talaria_build", Path(__file__).resolve().parents[1] / "build.py")
+    build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build)
+    monkeypatch.setattr(build, "talaria_home", lambda: tmp_path / "talaria")
+    return build
+
+
+def test_seed_keeps_the_workspace_and_refreshes_talaria(tmp_path, monkeypatch):
+    """build.py: package.json, tsconfig.json and shared/ are Hermes' once seeded; talaria/ is the plugin's."""
+    build = load_build(tmp_path, monkeypatch)
+    ws = build.workspace()
+    build.seed(ws)
+    assert (ws / "talaria" / "vite.config.mjs").is_file() and (ws / "talaria" / "viz" / "entry.ts").is_file()
+    assert (ws / "shared" / "Screen.tsx").is_file() and (ws / "apps").is_dir()
+    (ws / "package.json").write_text('{"dependencies": {"react": "18.0.0"}}')
+    (ws / "shared" / "Screen.tsx").write_text("mine")
+    (ws / "talaria" / "stale.js").write_text("gone after the next seed")
+    build.seed(ws)
+    assert json.loads((ws / "package.json").read_text()) == {"dependencies": {"react": "18.0.0"}}
+    assert (ws / "shared" / "Screen.tsx").read_text() == "mine"
+    assert not (ws / "talaria" / "stale.js").exists()
+
+    assert build.add_packages(ws)  # the missing ones, at their pins; react stays where Hermes put it
+    deps = json.loads((ws / "package.json").read_text())["dependencies"]
+    assert deps["react"] == "18.0.0" and deps["vite"] == build.PACKAGES["vite"] and set(build.PACKAGES) <= set(deps)
+    assert not build.add_packages(ws)
+
+
+def test_swap_replaces_the_last_build_and_keeps_data(tmp_path, monkeypatch):
+    build = load_build(tmp_path, monkeypatch)
+    dest, staged = tmp_path / "apps" / "trips", tmp_path / "out"
+
+    def stage(files):
+        import shutil
+        shutil.rmtree(staged, ignore_errors=True)
+        for rel in files:
+            (staged / rel).parent.mkdir(parents=True, exist_ok=True)
+            (staged / rel).write_text(rel)
+
+    dest.mkdir(parents=True)
+    (dest / "data.json").write_text("live")
+    stage(["index.html", "assets/a1.js", "cebu/index.html"])
+    build.swap(staged, dest)
+    stage(["index.html", "assets/a2.js"])
+    build.swap(staged, dest)
+    assert build.files_in(dest) == {"index.html", "assets/a2.js", "data.json", ".build.json"}
+    assert (dest / "data.json").read_text() == "live" and not (dest / "cebu").exists()
+    assert json.loads((dest / ".build.json").read_text())["files"] == ["assets/a2.js", "index.html"]
+
+
+def test_a_failed_build_changes_nothing(tmp_path, monkeypatch):
+    build = load_build(tmp_path, monkeypatch)
+    ws = build.workspace()
+    build.seed(ws)
+    (ws / "apps" / "trips").mkdir()
+    (ws / "apps" / "trips" / "index.html").write_text("<title>Trips</title>")
+    dest = build.built("trips")
+    dest.mkdir(parents=True)
+    (dest / "index.html").write_text("the last good build")
+
+    def fail(*a, **k):
+        raise build.BuildError("Building trips failed:\nApp.tsx:1:32 Expected `}`")
+    monkeypatch.setattr(build, "run", fail)
+    with pytest.raises(build.BuildError, match="App.tsx:1:32"):
+        build.build_one("trips", ws, {})
+    assert (dest / "index.html").read_text() == "the last good build"
+    with pytest.raises(build.BuildError, match="--new nope"):
+        build.build_one("nope", ws, {})
+
+
+@pytest.mark.skipif(not os.environ.get("TALARIA_TEST_BUILD"), reason="set TALARIA_TEST_BUILD=1 (npm installs, ~30 s)")
+def test_builds_a_new_app_end_to_end(tmp_path, monkeypatch):
+    """The template app through a real npm install and vite build: pages, Tailwind classes from shared/, and data
+    that survives a rebuild."""
+    build = load_build(tmp_path, monkeypatch)
+    assert build.main(["--new", "demo"]) == 0
+    dest = build.built("demo")
+    html = (dest / "index.html").read_text()
+    assert "<title>Demo</title>" in html and 'src="/assets/' in html
+    css = "".join(p.read_text() for p in (dest / "assets").glob("*.css"))
+    assert "max-w-xl" in css  # a class only shared/Screen.tsx uses
+    (dest / "data.json").write_text("[]")
+    assert build.main(["demo"]) == 0
+    assert (dest / "data.json").read_text() == "[]"
+
+
+def test_migrate_an_older_app(tmp_path, monkeypatch):
+    """migrate: the live app stays until the first build, which retires its old code and keeps everything else."""
+    build = load_build(tmp_path, monkeypatch)
+    monkeypatch.setattr(build, "node_env", lambda: {})
+    monkeypatch.setattr(build, "install", lambda ws, env: None)
+    old = build.built("spending")
+    (old / "images").mkdir(parents=True)
+    for rel, text in (("index.html", "<title> Spending\n</title>"), ("app.js", "old"), ("style.css", "old"),
+                      ("data.json", "live"), ("refresh.py", "routine"), ("images/a.jpg", "img")):
+        (old / rel).write_text(text)
+    assert build.main(["--new", "spending"]) == 1  # would replace the live app
+    assert build.main(["migrate", "spending"]) == 0
+    ws = build.workspace()
+    assert "<title>Spending</title>" in (ws / "apps" / "spending" / "index.html").read_text()
+    assert (ws / "legacy" / "spending" / "app.js").read_text() == "old"
+    assert (old / "app.js").read_text() == "old"  # still live
+    assert build.main(["migrate", "spending"]) == 1
+
+    def vite(cmd, ws_, env, what):
+        out = Path(env["TALARIA_OUT"])
+        (out / "assets").mkdir(parents=True)
+        (out / "index.html").write_text("new")
+        (out / "assets" / "index-1.js").write_text("new")
+    monkeypatch.setattr(build, "run", vite)
+    build.build_one("spending", ws, {})
+    assert build.files_in(old) == {"index.html", "assets/index-1.js", "data.json", "refresh.py", "images/a.jpg",
+                                   ".build.json"}
+    assert (old / "index.html").read_text() == "new" and (old / "data.json").read_text() == "live"
+
+
+def make_action(app: Path, name: str, code: str) -> None:
+    (app / "actions").mkdir(parents=True, exist_ok=True)
+    (app / "actions" / f"{name}.py").write_text(code)
+
+
+ECHO = "import json, os, sys\nreq = json.load(sys.stdin)\nprint(json.dumps({'got': req, 'app': os.environ['TALARIA_APP'], 'cwd': os.getcwd()}))\n"
+
+
+def test_actions_run_only_declared_scripts(talaria, tmp_path):
+    """actions.run: a declared script gets the request on stdin and answers JSON; nothing else runs."""
+    import base64
+    from talaria_plugin import actions
+    apps = tmp_path / "talaria" / "apps"
+    make_action(apps / "news", "echo", ECHO)
+    make_action(apps / "news", "broken", "import sys\nprint('half', end='')\nsys.exit('it broke')\n")
+    make_action(apps / "news", "chatty", "print('not json')\n")
+    out = json.loads(actions.run(apps, "news", "echo", b'{"op": "list"}'))
+    assert out["ok"] and out["result"]["got"] == {"op": "list"} and out["result"]["app"] == "news"
+    assert Path(out["result"]["cwd"]).resolve() == (apps / "news").resolve()
+    for app, name, err in (("news", "missing", "no action"), ("news", "../news/actions/echo", "Not an app"),
+                           ("../x", "echo", "Not an app"), ("news", "broken", "it broke"), ("news", "chatty", "JSON")):
+        res = json.loads(actions.run(apps, app, name, b"{}"))
+        assert not res["ok"] and err in res["error"], (name, res)
+    assert "over" in json.loads(actions.run(apps, "news", "echo", b"1" * (actions.MAX_REQUEST + 1)))["error"]
+    # the same through /talaria action, as the phone sends it
+    b64 = base64.b64encode(b'{"op": "list"}').decode()
+    assert json.loads(talaria.handle_command(f"action news echo {b64}"))["result"]["got"] == {"op": "list"}
+    assert not json.loads(talaria.handle_command("action news echo not-base64!"))["ok"]
+
+
+def test_preview_runs_actions_only_from_the_apps_page(tmp_path, monkeypatch):
+    """POST /__action/<name> needs the SDK's header and a local Origin, so another site's page can't trigger it."""
+    import importlib.util, threading, urllib.request, urllib.error
+    spec = importlib.util.spec_from_file_location("talaria_preview_actions", Path(__file__).resolve().parents[1] / "preview.py")
+    preview = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preview)
+    apps = tmp_path / "apps"
+    make_action(apps / "news", "echo", ECHO)
+    (apps / "news" / "index.html").write_text("<title>News</title>")
+    monkeypatch.setattr(preview, "apps_root", lambda: apps)
+    server = preview.http.server.ThreadingHTTPServer(("127.0.0.1", 0), preview.Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+
+    def post(headers):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/__action/echo", data=b'{"n": 1}', method="POST",
+                                     headers={"Host": "news.localhost", **headers})
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+    try:
+        code, body = post({"X-Talaria-Action": "1", "Origin": f"http://news.localhost:{port}"})
+        assert code == 200 and body["result"]["got"] == {"n": 1}
+        assert post({"Origin": f"http://news.localhost:{port}"})[0] == 403          # no SDK header
+        assert post({"X-Talaria-Action": "1", "Origin": "https://evil.example"})[0] == 403
+        # and on Desktop's per-app port
+        port2 = preview.serve_app("news")
+        req = urllib.request.Request(f"http://127.0.0.1:{port2}/__action/echo", data=b"{}", method="POST",
+                                     headers={"X-Talaria-Action": "1", "Origin": f"http://localhost:{port2}"})
+        with urllib.request.urlopen(req) as r:
+            assert json.loads(r.read())["ok"]
+    finally:
+        server.shutdown()
+
+
+def test_seed_teaches_an_older_workspace_new_aliases(tmp_path, monkeypatch):
+    build = load_build(tmp_path, monkeypatch)
+    ws = build.workspace()
+    ws.mkdir(parents=True)
+    (ws / "tsconfig.json").write_text(json.dumps({"compilerOptions": {"paths": {"viz": ["./talaria/viz/entry.ts"], "mine": ["./x"]}}, "include": ["apps"]}))
+    build.seed(ws)
+    cfg = json.loads((ws / "tsconfig.json").read_text())
+    assert cfg["compilerOptions"]["paths"]["talaria"] == ["./talaria/sdk.ts"] and cfg["compilerOptions"]["paths"]["mine"] == ["./x"]
+    assert "talaria/sdk.ts" in cfg["include"] and (ws / "talaria" / "sdk.ts").is_file()
+
+
+STARTER = Path(__file__).resolve().parents[1] / "starters" / "news"
+
+
+def test_newsroom_starter_has_nothing_personal():
+    """Every install gets this: no one's name, home, company or timezone in it."""
+    import re
+    hits = [f"{p.relative_to(STARTER)}: {m.group(0)}" for p in STARTER.rglob("*") if p.is_file() and p.suffix in (".py", ".ts", ".tsx", ".md", ".json", ".html", ".css")
+            for m in re.finditer(r"Jesse|Mara\b|Sageware|Erudifi|Manila|/root", p.read_text())]
+    assert not hits, hits
+
+
+def newsroom_app(tmp_path) -> Path:
+    import shutil
+    app = tmp_path / "talaria" / "apps" / "news"
+    shutil.copytree(STARTER / "app", app)
+    return app
+
+
+def act(app: Path, name: str, req) -> tuple[int, object]:
+    p = subprocess.run([sys.executable, str(app / "actions" / f"{name}.py")], input=json.dumps(req), capture_output=True, text=True,
+                       cwd=app, env={**os.environ, "TALARIA_HOME": str(app.parents[1])}, timeout=120)
+    return p.returncode, (json.loads(p.stdout) if p.returncode == 0 else (p.stderr.strip().splitlines() or [""])[-1])
+
+
+def test_newsroom_settings_sources_and_feedback(tmp_path):
+    app = newsroom_app(tmp_path)
+    assert act(app, "settings", {"op": "get"})[1]["configured"] is False
+    assert act(app, "settings", {"op": "save", "topics": []})[0] != 0
+    assert act(app, "settings", {"op": "save", "topics": ["Cybersecurity"], "timezone": "Mars/Base"})[0] != 0
+    code, out = act(app, "settings", {"op": "save", "topics": ["Cybersecurity", "Nope"], "interests": "  web   security ", "timezone": "Asia/Tokyo"})
+    assert code == 0 and out["configured"] and out["settings"]["topics"] == ["Cybersecurity"] and out["settings"]["interests"] == "web security"
+    sugg = act(app, "sources", {"op": "suggest", "topics": ["Cybersecurity"]})[1]["suggestions"]
+    assert sugg and all(s["topic"] == "Cybersecurity" and s["url"].startswith("https://") for s in sugg)
+    code, out = act(app, "sources", {"op": "add", "url": sugg[0]["url"], "title": sugg[0]["title"], "topic": "Cybersecurity"})
+    assert code == 0 and [f["url"] for f in out["feeds"]] == [sugg[0]["url"]]
+    assert sugg[0]["url"] not in [s["url"] for s in act(app, "sources", {"op": "suggest", "topics": ["Cybersecurity"]})[1]["suggestions"]]
+    for bad in ("https://127.0.0.1/feed", "http://example.com/feed", "https://10.0.0.1/rss"):
+        assert act(app, "sources", {"op": "add", "url": bad})[0] != 0, bad
+        if "127.0.0.1" in bad or "10.0.0.1" in bad:  # discover upgrades a typed http:// to https://, so only these must fail
+            assert act(app, "sources", {"op": "discover", "url": bad})[0] != 0, bad
+    assert act(app, "sources", {"op": "remove", "url": sugg[0]["url"]})[1]["feeds"] == []
+    code, out = act(app, "feedback", {"votes": [{"id": "a" * 16, "title": "T", "value": 1, "at": "2026-10-24T00:00:00Z", "junk": 1}, {"id": "b", "value": 5}]})
+    assert code == 0 and out["saved"] == 1
+    assert json.loads((app / "reader-feedback.json").read_text())["votes"] == [{"id": "a" * 16, "title": "T", "value": 1, "at": "2026-10-24T00:00:00Z"}]
+
+
+def test_newsroom_routine_schedules_in_the_readers_morning(tmp_path):
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    app = newsroom_app(tmp_path)
+    (app / "newsroom.json").write_text(json.dumps({"timezone": "Asia/Tokyo", "topics": ["Fintech"], "feeds": []}))
+    src = (app / "actions" / "routine.py").read_text().split("req = json.load")[0]
+    ns = {"__name__": "check", "__file__": str(app / "actions" / "routine.py")}
+    exec(compile(src, "routine", "exec"), ns)
+    seven = dt.datetime.now(ZoneInfo("Asia/Tokyo")).replace(hour=7, minute=0, second=0, microsecond=0).astimezone().hour
+    assert ns["schedule"]("daily") == f"0 {seven} * * *"
+    assert ns["schedule"]("12h") == "0 " + ",".join(map(str, sorted({seven, (seven + 12) % 24}))) + " * * *"
+    assert len(ns["schedule"]("6h").split()[1].split(",")) == 4
+    assert act(app, "routine", {"op": "status"})[1] == {"installed": False}
+    assert act(app, "routine", {"op": "install"})[0] != 0  # no sources yet: nothing is created
+    assert act(app, "routine", {"op": "install", "frequency": "hourly"})[0] != 0
+
+
+def test_newsroom_publishes_in_the_readers_timezone(tmp_path):
+    """publish_edition: dates come from newsroom.json's timezone, and a missing reader venv doesn't fail it."""
+    import datetime as dt
+    app = newsroom_app(tmp_path)
+    (app / "newsroom.json").write_text(json.dumps({"timezone": "Pacific/Auckland", "topics": ["Fintech"], "feeds": []}))
+    arts = [{"id": f"{i:016x}", "title": f"Story {i}", "url": f"https://example.com/{i}", "publisher": "Ex", "topics": ["Fintech"],
+             "publishedAt": "2026-10-24T00:00:00+00:00", "summary": ""} for i in range(3)]
+    (app / "data.json").write_text(json.dumps({"updatedAt": "2026-10-24T11:00:00+00:00", "articles": arts}))
+    stage = tmp_path / "stage.json"
+    stage.write_text(json.dumps({"version": 1, "editedAt": "2026-10-24T11:30:00+00:00", "basisUpdatedAt": "2026-10-24T11:00:00+00:00",
+                                 "summary": "Test.", "items": [{"id": a["id"], "priority": 50, "key": False, "tags": ["a", "b"],
+                                 "why": "Because it matters to this reader.", "evidence": {"status": "feed-only", "url": a["url"], "note": "Feed only."}} for a in arts]}))
+    p = subprocess.run([sys.executable, str(app / "publish_edition.py"), str(stage)], capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    index = json.loads((app / "editions.json").read_text())
+    assert index["editions"][0]["date"] == "2026-10-25"  # 11:30 UTC is the next day in Auckland
+
+
+def test_starters_install_once_and_leave_existing_apps(tmp_path, monkeypatch):
+    build = load_build(tmp_path, monkeypatch)
+    ws = build.workspace()
+    build.seed(ws)
+    calls = []
+    monkeypatch.setattr(build, "install", lambda ws, env: None)
+    monkeypatch.setattr(build, "build_one", lambda name, ws, env: calls.append(name))
+    monkeypatch.setattr(build.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(build.subprocess.SubprocessError("no venv here")))
+    assert build.install_starters(ws, {}) == {"news": "installed"}
+    assert (ws / "apps" / "news" / "Setup.tsx").is_file() and (ws / "shared" / "newsroom" / "useNewsroom.ts").is_file()
+    assert (build.built("news") / "actions" / "routine.py").is_file() and not (build.built("news") / "newsroom.json").exists()
+    assert calls == ["news"]
+    assert build.install_starters(ws, {}) == {"news": "installed"} and calls == ["news"]  # recorded: never again
+    # a box that already has its own news app keeps it
+    build.starters_record().unlink()
+    (ws / "apps" / "news" / "App.tsx").write_text("mine")
+    assert build.install_starters(ws, {})["news"].startswith("skipped")
+    assert (ws / "apps" / "news" / "App.tsx").read_text() == "mine"

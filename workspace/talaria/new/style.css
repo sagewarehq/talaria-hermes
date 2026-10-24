@@ -1,0 +1,9 @@
+@import "tailwindcss";
+/* Classes used in shared components count too. */
+@source "../../shared";
+
+:root { color-scheme: light dark; }
+body { margin: 0; font: 15px/1.45 -apple-system, system-ui, sans-serif; }
+/* A phone page never scrolls sideways: clip the page, and let long strings (URLs, package names) wrap. */
+html, body { overflow-x: clip; }
+h1, h2, h3, p, a, li, blockquote { overflow-wrap: break-word; }

@@ -1,11 +1,11 @@
 ---
 name: app
-description: "Use when the user asks for an app, or for a dashboard, tracker, planner, report, tool or any page or small app to look at in Talaria (their iPhone app). Covers where apps live, the libraries Talaria has built in, how to design one, and how to hand it back so it opens in the app."
-version: 1.2.0
+description: "Use when the user asks for an app, or for a dashboard, tracker, planner, report, tool or any page or small app to look at in Talaria (their iPhone app). Covers the Vite + React workspace apps are built in, the packages it has, how to design one, and how to hand it back so it opens in the app."
+version: 2.2.0
 author: Sageware Solutions Inc.
 metadata:
   hermes:
-    tags: [talaria, app, web, dashboard, ui, charts]
+    tags: [talaria, app, web, dashboard, ui, charts, react, vite]
 ---
 
 # Talaria apps
@@ -16,34 +16,129 @@ report, a game, a control panel. Be ambitious. An app is a whole app, not a widg
 
 ## Where it lives
 
-Each app is a folder on this machine:
+Every app is a sub-app of one Vite + React + TypeScript project on this machine, the **workspace**, and is built
+into a folder of its own that Talaria loads:
 
-    ~/.hermes/talaria/apps/<name>/index.html
+    ~/.hermes/talaria/workspace/            the Vite project: package.json, node_modules, tsconfig.json
+      shared/                               components, hooks and styles more than one app uses
+      apps/<name>/index.html, main.tsx, …   one app's source
+      talaria/                              Talaria's own (the build config, viz); replaced on every build, don't edit
+    ~/.hermes/talaria/apps/<name>/          the built app, which the phone opens, plus its data files
 
-- `<name>` is short kebab-case (`spending`, `hiring-pipeline`, `cebu-trip`). Create the folders if they're missing.
-- `index.html` is the entry. Put anything else beside it: more pages, ES modules, components, CSS, images, and
-  JSON data. Everything loads by path within the folder (`./app.js`, `fetch('/data.json')`).
-- The page's `<title>` is the app's name in Talaria. Keep it short.
-- To change an app, edit its folder in place; `ls ~/.hermes/talaria/apps` lists them all. To delete one,
-  remove its folder.
+- `<name>` is short kebab-case (`spending`, `hiring-pipeline`, `cebu-trip`).
+- Write source only in `workspace/apps/<name>/` and `workspace/shared/`. The built folder is the build's output,
+  except for data files (below).
+- `ls ~/.hermes/talaria/workspace/apps` lists the apps; `ls ~/.hermes/talaria/apps` lists what Talaria shows. To
+  delete an app, remove both folders.
+
+## Build it
+
+    python3 ~/.hermes/plugins/talaria/build.py --new <name>    start an app from the template, and build it
+    python3 ~/.hermes/plugins/talaria/build.py <name>          build it after every change to its source
+    python3 ~/.hermes/plugins/talaria/build.py --all           build every app, after a change to shared/
+    python3 ~/.hermes/plugins/talaria/build.py add <pkg>…      add npm packages to the workspace
+    python3 ~/.hermes/plugins/talaria/build.py migrate <name>  move an older app in (below)
+
+- **Build after every change to source**, then look at it (below). Talaria shows the last good build: a failed
+  build changes nothing there and prints the error with its file and line. Fix it and build again.
+- Changing a data file needs no build.
+- The first build installs the packages and takes about half a minute; after that a build takes a few seconds.
+- It's ordinary Vite: imports without extensions, `import './style.css'`, npm packages, images and fonts imported
+  from source, `import.meta.env`. Files in `apps/<name>/public/` are copied as they are.
+- Types are stripped, not checked. To check them, run `npx tsc --noEmit` in the workspace.
+- If the build says it needs Node.js, there's none on this machine: write a plain HTML app straight into
+  `~/.hermes/talaria/apps/<name>/index.html` instead, with no build. Its module scripts can still import
+  `react`, `react-dom/client`, `viz`, `motion/react`, `lucide-react` and `d3` by name (Talaria serves its own
+  copies), and `html` (htm bound to React) for markup without JSX.
+
+## What's in it
+
+| import | what |
+|---|---|
+| `react`, `react-dom/client` | React 19 |
+| `viz` | Datagen's charts (below) |
+| `motion/react` | Motion: animation, gestures, layout transitions, `AnimatePresence` |
+| `lucide-react` | Lucide icons as components (`<Wallet size={16} />`) |
+| `d3` | d3 v7, for anything custom (scales, shapes, maps, force layouts) |
+| `@shared/…` | the workspace's `shared/` folder |
+
+Tailwind v4 is set up: a CSS file with `@import "tailwindcss";` and `@source "../../shared";` (so classes in
+shared components count), imported from `main.tsx`. Anything else: `build.py add <pkg>`, then import it. Packages
+are bundled into the app, so it doesn't depend on a CDN.
+
+`shared/` starts with:
+- `Screen` (`@shared/Screen`): a page laid out under Talaria's top bar, with the right safe-area padding.
+- `useJSON(path)` (`@shared/useJSON`): fetches one of the app's data files, never cached.
+
+Add to it whatever a second app would otherwise copy: a theme, a card, a data hook. After changing it, build with
+`--all`, since every app that imports it has the old copy until it's rebuilt.
+
+`--new` starts an app with this skeleton, in `workspace/apps/<name>/`. `index.html`:
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Spending</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
+```
+
+`main.tsx` renders `<App />` into `#app` and imports `./style.css`; `App.tsx` is the app. The page's `<title>` is
+the app's name in Talaria; keep it short.
 
 ## Pages and state
 
 An app can have as many pages as it needs. Talaria is its browser: links between its pages open in place, and
 Talaria's Back button (and the edge swipe) walks back through them before it leaves the app.
 
-- **Pages are files.** `trip.html` beside `index.html`, or a folder with its own `index.html`. Link them with
-  relative hrefs: `<a href="./trip.html#tokyo">`, `<a href="./cebu/">` (keep the trailing slash on a folder).
-- **`/` is the app's root** on every page, so a nested page reaches shared files as `fetch('/data.json')`,
-  `import '/app.js'` and `<link href="/style.css">`. Use these root paths for anything more than one page shares.
+- **Pages are HTML files.** `trip.html` beside `index.html` (with its own `<script type="module"
+  src="./trip.tsx">`), or a folder with its own `index.html`. Every `.html` in the app's source is built as a page.
+  Link them with relative hrefs: `<a href="./trip.html#tokyo">`, `<a href="./cebu/">` (keep the trailing slash).
+- **`/` is the app's root** on every page, so any page fetches data as `fetch('/data.json')`.
 - **One-page apps work too.** Route with the hash (`#/settings`, `#/trip/tokyo`); each route counts as a page for
-  Back. The History API works as well: a reload of a route that isn't a file serves the root `index.html`, so
-  load its scripts and styles by root paths.
+  Back. The History API works as well: a reload of a route that isn't a file serves the root `index.html`.
 - **Each app keeps its own state.** `localStorage` and IndexedDB persist on the phone between launches, shared
   by every page of that app and private to it. Use them for what the user does on the phone: checked items,
   filters, drafts, the last tab. That state stays on the phone; data that Hermes or a routine writes belongs in the
   app's JSON files.
 - Give each page its own `<title>`, and lay out every page under the top bar like the first (below).
+
+## Data
+
+Data that Hermes or a routine writes lives in the **built** folder, `~/.hermes/talaria/apps/<name>/data.json`
+(any names, any number of files), and the app fetches it at runtime. A build never touches those files. Never
+import data into source or put it in `public/`: the first freezes it into the build, the second copies an old file
+over the live one on every build.
+
+## Actions: changing things from the page
+
+A page can't write files itself. When it needs to change something on this machine (save settings, edit a list,
+start a routine, record what the user did), give the app an **action**: a Python script in its built folder,
+
+    ~/.hermes/talaria/apps/<name>/actions/<action>.py
+
+and call it from the page:
+
+```tsx
+import { action } from 'talaria'
+const saved = await action('settings', { op: 'save', topics })
+```
+
+- The script gets the request as JSON on stdin, runs in the app's folder, and prints one JSON value (64 KB at most)
+  as the answer. Exit non-zero (`sys.exit("message")`) to fail; `action()` throws with that message.
+- Standard library only, and quick: it has two minutes, and the phone waits.
+- Put actions in the built folder, not the source: a build never touches them, and only you can add one.
+- Anything fetched from a URL the user typed must be public https only (resolve it and refuse private addresses,
+  on redirects too); never fetch the machine itself.
+- `action()` throws `ActionsUnavailable` on a Talaria that can't run actions yet; show "Update Talaria" for it.
+- The preview runs actions too, so try them there before handing the app back.
 
 ## Hand it back
 
@@ -52,73 +147,35 @@ line of its own, so Talaria shows a card that opens it:
 
     MEDIA:/root/.hermes/talaria/apps/<name>/index.html
 
-Use the absolute path. When the change is on one page, hand back that page instead
+Use the absolute path of the **built** page. When the change is on one page, hand back that page instead
 (`MEDIA:/root/.hermes/talaria/apps/<name>/trip.html`) and the card opens straight to it. Before the card, say
 in a sentence or two what you built or changed.
 
-## What's built in
+## Apps from before the workspace
 
-Talaria serves these from itself, offline, with no build step. It adds an import map to every app page,
-so `<script type="module">` can import them by name:
+Older apps are plain folders in `~/.hermes/talaria/apps/<name>/` (an `index.html` with `app.js`, htm, or `.jsx`
+files Talaria compiles as it serves them) with no source in the workspace. They keep working. For a small fix,
+edit them in place. For a real change, migrate it into the workspace:
 
-| import | what |
-|---|---|
-| `react`, `react-dom/client` | React 19 |
-| `html` | htm bound to React: JSX-like markup with no compiler, ``html`<${Card} title=${t}>…</${Card}>` `` |
-| `viz` | Datagen's charts (below) |
-| `motion/react` | Motion: animation, gestures, layout transitions, `AnimatePresence` |
-| `lucide-react` | Lucide icons as components (`<${Wallet} size=${16} />`) |
-| `d3` | d3 v7, for anything custom (scales, shapes, maps, force layouts) |
+    python3 ~/.hermes/plugins/talaria/build.py migrate <name>
 
-Classic scripts and styles at `/lib/`:
-- `/lib/tailwind.js`: the Tailwind v4 browser build, for utility classes in markup.
-- `/lib/alpine.js`: Alpine.js. Load it with `defer`.
-- `/lib/viz.css`: the styles the `viz` charts need.
-- `/lib/talaria.css`: Talaria's own look, but only if you want it.
-
-Anything from an https CDN works too, but the built-ins work offline and load instantly; prefer them.
-
-A skeleton:
-
-```html
-<!doctype html>
-<html><head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Spending</title>
-  <link rel="stylesheet" href="/lib/viz.css">
-  <style>
-    body { margin: 0; font: 15px/1.45 -apple-system, system-ui, sans-serif;
-           padding: calc(env(safe-area-inset-top) + 48px) 16px calc(env(safe-area-inset-bottom) + 16px); }
-  </style>
-</head><body>
-  <div id="app"></div>
-  <script type="module">
-    import { createRoot } from 'react-dom/client'
-    import { useState } from 'react'
-    import html from 'html'
-    import { Grid, Panel, Stat } from 'viz'
-    import { motion } from 'motion/react'
-
-    const rows = await fetch('./data.json').then(r => r.json())
-    function App() {
-      return html`<${Grid}>
-        <${Stat} title="This month" value=${618000} compare=${561000} format=${{ currency: 'PHP' }} />
-        <${Panel} title="Revenue" chart=${{ type: 'area', x: 'month', y: 'revenue' }} rows=${rows} />
-      <//>`
-    }
-    createRoot(document.getElementById('app')).render(html`<${App} />`)
-  </script>
-</body></html>
-```
+1. It sets up the rewrite without touching the live app: a source folder from the template under the app's old
+   title, and a copy of the old code (its `.html`, `.js`, `.jsx`, `.tsx`, `.ts` and `.css`) in
+   `~/.hermes/talaria/workspace/legacy/<name>/` to work from. (`--new` refuses an older app, since it would
+   replace it.)
+2. Rewrite the app in React in `workspace/apps/<name>/`, reading the old code for what it did, reusing `shared/`.
+   Point it at the same data files (`fetch('/data.json')`).
+3. Build it when the rewrite is ready. The first build replaces the old code in the built folder with the new
+   build. Its data, images and any routine's scripts stay where they are, so a routine that writes them keeps
+   working.
 
 ## Charts: use `viz`, not Chart.js
 
 `viz` is Datagen's chart kit. It's hand-drawn SVG: quiet gridlines, rounded bar ends, hover tooltips, a
 colour-blind-safe palette, and light and dark modes. It looks far better than library defaults.
 
-- **`<${Grid}>`** lays panels out on 12 columns. On a phone, half and third widths take the full width.
-- **`<${Panel} title description width chart rows formats height>`** is a card with a chart.
+- **`<Grid>`** lays panels out on 12 columns. On a phone, half and third widths take the full width.
+- **`<Panel title description width chart rows formats height>`** is a card with a chart.
   - `width` is `full`, `half`, `third` or `quarter`.
   - `rows` is an array of objects.
   - `chart` is one of:
@@ -128,9 +185,9 @@ colour-blind-safe palette, and light and dark modes. It looks far better than li
     - `{ type: 'scatter', x, y, series, label }`
     - `{ type: 'number', value, compare, caption, good: 'up' | 'down' }`
   - A Panel can also hold any children instead of a chart.
-- **`<${Stat} title value compare good format width>`** is a headline number with its change. Use `good="down"`
+- **`<Stat title value compare good format width>`** is a headline number with its change. Use `good="down"`
   when a fall is good news.
-- **`<${Chart} chart rows formats height>`** is a chart without the card.
+- **`<Chart chart rows formats height>`** is a chart without the card.
 - **`formats`** maps a column to how its values read:
   - `'number'`, `'integer'`, `'compact'` (1.2K)
   - `'currency'` or `{ currency: 'PHP' }`
@@ -152,7 +209,8 @@ colour-blind-safe palette, and light and dark modes. It looks far better than li
 - **It's a phone.**
   - Design for about 400pt wide, one column.
   - Make thumb-sized targets (44pt or more).
-  - Never scroll sideways.
+  - Never scroll sideways. The template's CSS clips the page and wraps long strings; keep both if you replace it,
+    and give any scroller of its own (a swipe row, a reader) `overflow-x: hidden` or `overflow-wrap: anywhere`.
 - **Keep it compact.** Phones reward density; air is for separating groups, not filling the screen.
   - Gaps of 8–12px between items and 16–20px between sections; card padding 12–14px; 16px side margins.
   - Body text 15–16px, labels 12–13px. A headline over 28px only when it's the point of the page.
@@ -170,23 +228,26 @@ colour-blind-safe palette, and light and dark modes. It looks far better than li
   - Give tap feedback.
   - Use real interactions (tabs, filters, sheets, drag) over static text.
 - **Data:**
-  - Put real data in JSON files beside the page, and have the page read them.
+  - Put real data in JSON files in the app's built folder (`~/.hermes/talaria/apps/<name>/data.json`), and have
+    the page fetch them (`useJSON('/data.json')` from `@shared/useJSON`). Never import data or put it in
+    `public/`: a build would freeze it, or copy an old file over the live one.
   - When it should stay current, offer to set up a routine (a cron job) that refreshes the JSON, so the app
     stays live without being rebuilt.
 
 ## Look at it before you hand it back
 
-Don't stop when the files are written. An app isn't done until you've seen it on a phone-sized screen and it looks
-right. Every time you build or change one:
+Don't stop when it builds. An app isn't done until you've seen it on a phone-sized screen and it looks right.
+Every time you build or change one:
 
-1. **Start the preview.** It serves the app the way Talaria does, with the same built-in libraries:
+1. **Build it** (`build.py <name>`), and fix any error it prints.
+2. **Start the preview.** It serves the built app the way Talaria does:
 
        python3 ~/.hermes/plugins/talaria/preview.py <name>
 
    It prints two addresses: `phone:` frames the app at iPhone size, between a drawn status bar and home
    indicator, under Talaria's floating Back and ⋯ buttons; `alone:` is the app by itself. The server keeps
-   running, so later calls return at once.
-2. **Look at it.** Open the `phone:` address with `browser_navigate`, then use `browser_vision` and ask about it
+   running, so later calls return at once, and it always serves the latest build.
+3. **Look at it.** Open the `phone:` address with `browser_navigate`, then use `browser_vision` and ask about it
    critically, as the user would see it:
    - Does anything overflow, get cut off, overlap, or scroll sideways?
    - Does the content start right under the floating buttons, with nothing hidden behind them?
@@ -194,15 +255,12 @@ right. Every time you build or change one:
    - Do the charts and data show real values, with no blank panels, `NaN` or `undefined`?
    - Does it look intentional and finished, or like a rough draft?
    Scroll and look again when the page is longer than one screen.
-3. **Check for errors.** Open the `alone:` address and read `browser_console`. Fix every error and failed
+4. **Check for errors.** Open the `alone:` address and read `browser_console`. Fix every error and failed
    request.
-4. **Go through every page you built or changed.** Frame a subpage with `/__phone/<page>` (for example
+5. **Go through every page you built or changed.** Frame a subpage with `/__phone/<page>` (for example
    `http://<name>.localhost:8797/__phone/trip.html`), and click the main interactions (tabs, filters, sheets)
    with the browser tools.
-5. **Fix what you find, then look again.** Repeat until there is nothing left to fix. Only then hand it back.
+6. **Fix what you find, build, then look again.** Repeat until there is nothing left to fix. Only then hand it back.
 
-In your reply, say briefly what you checked and anything you fixed after looking. If the preview can't start or
-the browser can't reach it, say so plainly; don't claim it looked fine. Also make sure, before you look:
-- Every file you reference exists.
-- The HTML is complete.
-- Module scripts parse: `node --check` on any `.js` you wrote.
+In your reply, say briefly what you checked and anything you fixed after looking. If the build, the preview or the
+browser fails, say so plainly; don't claim it looked fine.

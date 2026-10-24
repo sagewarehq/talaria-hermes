@@ -1,0 +1,38 @@
+@import "tailwindcss";
+@source "../../shared";
+
+/* Newsroom's own system (DESIGN.md), refined: the same palette and scale, with depth and motion. */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f8fc; --surface: #ffffff; --surface-2: #f0f3f9; --text: #202124; --muted: #58616c; --faint: #8a929d;
+  --line: #dce2eb; --hair: #e8ecf2; --blue: #185abc; --blue-2: #1a73e8; --tint: #e8f0fe; --red: #a32926; --red-tint: #fce8e6;
+  --green: #137333; --shadow: 0 1px 2px rgba(32,33,36,.06), 0 4px 16px -4px rgba(32,33,36,.10);
+  --shadow-lift: 0 2px 4px rgba(32,33,36,.06), 0 16px 40px -12px rgba(24,90,188,.28);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111317; --surface: #1b1e23; --surface-2: #23272e; --text: #e3e5e9; --muted: #b1b9c4; --faint: #848d99;
+          --line: #343a44; --hair: #2a2f37; --blue: #a8c7fa; --blue-2: #a8c7fa; --tint: #263954; --red: #ffb4ab; --red-tint: #4a2522;
+          --green: #81c995; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px -6px rgba(0,0,0,.5);
+          --shadow-lift: 0 2px 4px rgba(0,0,0,.4), 0 18px 44px -14px rgba(0,0,0,.7); }
+}
+html, body { background: var(--bg); color: var(--text); overflow-x: clip; }
+/* Long unbroken strings (URLs, package names) wrap rather than push the page sideways. */
+h1, h2, h3, p, a, li, blockquote { overflow-wrap: break-word; }
+body { margin: 0; font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+       -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; text-rendering: optimizeLegibility; }
+::selection { background: var(--tint); color: var(--text); }
+input { caret-color: var(--blue); }
+button, a { touch-action: manipulation; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 10px; }
+.display { font-family: -apple-system, "SF Pro Display", BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+.act { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 999px; color: var(--muted); transition: color .15s, background .2s, transform .12s; }
+.act:active { transform: scale(.86); }
+.act:nth-child(1)[aria-pressed="true"], .act:nth-child(3)[aria-pressed="true"] { color: var(--blue); }
+.act:nth-child(2)[aria-pressed="true"] { color: var(--red); }
+.shimmer { background: linear-gradient(100deg, var(--surface-2) 30%, var(--surface) 50%, var(--surface-2) 70%); background-size: 300% 100%; animation: shimmer 1.4s infinite linear; }
+@keyframes shimmer { to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) { .shimmer { animation: none; } }
+.no-scrollbar { scrollbar-width: none; } .no-scrollbar::-webkit-scrollbar { display: none; }
+/* The reader: Apple's New York serif on iPhone, at a comfortable measure. */
+.reader { font-family: ui-serif, "New York", "Iowan Old Style", Georgia, serif; font-size: 18.5px; line-height: 1.68; color: var(--text); letter-spacing: -0.003em; }
+.reader h2, .reader .display { font-family: -apple-system, "SF Pro Display", system-ui, sans-serif; }
