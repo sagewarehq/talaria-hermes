@@ -19,7 +19,7 @@ export function Actions({ a, nr, className = '', button = '' }: { a: Article; nr
     <div className={`flex items-center ${className}`} aria-label="Feedback and save">
       <button className={button} aria-pressed={v === 1} aria-label={`More like this: ${a.title}`} onClick={() => nr.rate(a, 1)}><Glyph Icon={ThumbsUp} on={v === 1} /></button>
       <button className={button} aria-pressed={v === -1} aria-label={`Less like this: ${a.title}`} onClick={() => nr.rate(a, -1)}><Glyph Icon={ThumbsDown} on={v === -1} /></button>
-      <button className={button} aria-pressed={saved} aria-label={`${saved ? 'Unsave' : 'Save'}: ${a.title}`} onClick={() => nr.toggleSave(a)}><Glyph Icon={Bookmark} on={saved} /></button>
+      <button className={button} aria-pressed={saved} aria-label={`${saved ? 'Remove from Read later' : 'Read later'}: ${a.title}`} onClick={() => nr.toggleSave(a)}><Glyph Icon={Bookmark} on={saved} /></button>
     </div>
   )
 }

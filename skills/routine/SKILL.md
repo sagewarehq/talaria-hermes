@@ -1,7 +1,7 @@
 ---
 name: routine
 description: "Use when the user asks for a routine: something Hermes should do on a schedule (every weekday at 9, every hour, on the 1st). Covers setting it up as a cron job that reads well in Talaria's Routines list and reports where the user will see it."
-version: 1.0.0
+version: 1.1.0
 author: Sageware Solutions Inc.
 metadata:
   hermes:
@@ -32,8 +32,14 @@ schedule, its last and next run, and a session for every run. Set it up with you
   - Results should land where the user will see them. Use this chat's origin unless they name another place.
   - For routines that only matter when something's off, have the run say so plainly in its first line, and keep
     quiet otherwise.
-- **Apps.** When the routine keeps a Talaria app current (`~/.hermes/talaria/apps/<name>/`), have it
-  rewrite that app's JSON data files, not its page, so the app stays live without being rebuilt.
+- **Apps.** When the routine keeps a Talaria app current (`~/.hermes/talaria/apps/<name>/`), have it write
+  that app's data, never its page, so the app stays live without being rebuilt:
+  - an app with a database (`app.db` and `migrations/` in its folder): open `app.db` with Python's `sqlite3`
+    (`timeout=5`), and upsert the run's records in one transaction (`INSERT … ON CONFLICT(id) DO UPDATE`), so a
+    rerun or a half-finished run never duplicates or loses rows. Never change its schema here: that's a new
+    migration in `migrations/`. Prefer a script (`Script:` on the job) for this over the model writing SQL each run.
+  - otherwise, rewrite its JSON data files: to a temporary file, then rename it over the old one.
+  - Keep the last good data when a source fails, and record when it was last refreshed, so the app can say so.
 
 ## After creating it
 

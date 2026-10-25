@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
+try:
+    import sqlite3
+except ImportError:  # a Python built without it: pysqlite3-binary (db.py --check says how to add it)
+    import pysqlite3.dbapi2 as sqlite3
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -112,16 +115,19 @@ def get_state(session_id: str, conn: Optional[sqlite3.Connection] = None) -> Opt
             c.close()
 
 
-def dismiss(session_id: str, conn: Optional[sqlite3.Connection] = None) -> bool:
-    """Hide the session's row until its next turn. A session this store hasn't seen (its turns ran in
-    a backend without the plugin) gets a row of its own, dismissed, so the hide holds on every device
-    (the app leaves the sessions the store knows to it) instead of only on the one that asked."""
+def dismiss(session_id: str, turn_id: Optional[str] = None, conn: Optional[sqlite3.Connection] = None) -> bool:
+    """Hide the session's row until its next turn. ``turn_id`` is the turn the user saw: a dismissal
+    that arrives late (a cached row, an Undo that waited, a retry) then hides only that turn, never a
+    newer one they haven't seen. A session this store hasn't seen (its turns ran in a backend without
+    the plugin) gets a row of its own, dismissed, so the hide holds on every device (the app leaves the
+    sessions the store knows to it) instead of only on the one that asked."""
     if not session_id:
         return False
     own = conn is None
     c = conn or connect()
     try:
-        cur = c.execute("UPDATE attention SET dismissed_turn=COALESCE(turn_id, '') WHERE session_id=?", (session_id,))
+        cur = c.execute("UPDATE attention SET dismissed_turn=COALESCE(?, turn_id, '') WHERE session_id=?",
+                        (turn_id or None, session_id))
         if cur.rowcount == 0:
             cur = c.execute("INSERT INTO attention (session_id, state, updated, dismissed_turn) VALUES (?, 'idle', ?, '')"
                             " ON CONFLICT(session_id) DO NOTHING", (session_id, time.time()))

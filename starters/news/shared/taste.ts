@@ -1,6 +1,20 @@
 // Explicit, bounded, device-local taste model, ported unchanged from the original Newsroom (personalization.js) so
 // votes already on the phone keep their meaning. No remote calls or implicit tracking.
-export type Vote = { id: string; title: string; url: string; publisher: string; topics: string[]; tags: string[]; value: 1 | -1; at: string }
+/** Why a story got 👎, when the reader said: for the editor, and for how much the vote weighs here. */
+export const REASONS = {
+  topic: 'Not my topic',
+  seen: 'Already knew this',
+  source: 'Don’t trust the source',
+  quality: 'Thin or clickbait',
+  misleading: 'Misleading',
+  other: 'Something else',
+} as const
+export type Reason = keyof typeof REASONS
+
+export type Vote = {
+  id: string; title: string; url: string; publisher: string; topics: string[]; tags: string[]; value: 1 | -1; at: string
+  reason?: Reason; note?: string
+}
 export type Votes = Record<string, Vote>
 
 type Rated = { id: string; title?: string; url?: string; publisher?: string; topics?: unknown; tags?: unknown; priority?: number }
@@ -17,7 +31,8 @@ export function sanitizeVotes(input: unknown): Votes {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return out
   for (const [id, v] of Object.entries(input as Record<string, any>).slice(-2000)) {
     if (!v || ![-1, 1].includes(v.value) || !Number.isFinite(Date.parse(v.at))) continue
-    out[id] = { ...v, id, topics: strings(v.topics), tags: strings(v.tags) }
+    out[id] = { ...v, id, topics: strings(v.topics), tags: strings(v.tags),
+                reason: v.reason in REASONS ? v.reason : undefined, note: typeof v.note === 'string' ? v.note.slice(0, 500) : undefined }
   }
   return out
 }
@@ -28,9 +43,12 @@ export function affinity(a: Rated, votes: Votes, now = Date.now()): number {
   for (const v of Object.values(sanitizeVotes(votes))) {
     if (v.id === a.id) continue
     const decay = Math.pow(0.5, Math.max(0, now - Date.parse(v.at)) / (90 * 86400000))
+    // "Already knew this" says nothing against the subject; "don't trust the source" is about the publisher.
+    const subject = v.reason === 'seen' || v.reason === 'source' ? 0 : 1
+    const publisher = v.reason === 'source' ? 4 : 0.25
     const sharedTags = v.tags.filter((t) => ts.has(t)).length
     const sharedTopics = v.topics.filter((t) => topics.has(t)).length
-    delta += v.value * decay * (sharedTags * 3 + Math.min(1, sharedTopics) * 0.5 + (v.publisher === a.publisher ? 0.25 : 0))
+    delta += v.value * decay * (subject * (sharedTags * 3 + Math.min(1, sharedTopics) * 0.5) + (v.publisher === a.publisher ? publisher : 0))
   }
   return Math.max(-12, Math.min(12, delta))
 }

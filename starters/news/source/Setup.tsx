@@ -436,7 +436,7 @@ export function Collecting({ nr }: { nr: Newsroom }) {
   const [tip, setTip] = useState(0)
   useEffect(() => {
     const check = () => {
-      fetch('/status.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((s) => setCollected(Boolean(s?.ok))).catch(() => {})
+      fetch('status.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((s) => setCollected(Boolean(s?.ok))).catch(() => {})
       nr.reload()
     }
     check()

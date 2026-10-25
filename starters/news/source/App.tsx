@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { AnimatePresence, LayoutGroup, motion, useScroll, useTransform } from 'motion/react'
+import { createPortal } from 'react-dom'
+import { AnimatePresence, LayoutGroup, MotionConfig, motion, useScroll, useTransform } from 'motion/react'
 import {
-  ArrowUpRight, Bookmark, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, Clock, Download,
+  ArrowUpRight, Bookmark, CalendarDays, Heart, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, Clock, Download,
   Inbox, MessageSquare, Newspaper, Search, ShieldCheck, SlidersHorizontal, Sparkles, ThumbsDown, ThumbsUp, Undo2, X,
 } from 'lucide-react'
 import { Actions } from '@shared/newsroom/Icons'
 import { age, editionDay, editionTime, host, topicName, zoneName } from '@shared/newsroom/format'
+import { REASONS, type Reason } from '@shared/newsroom/taste'
 import { usePicker } from '@shared/newsroom/usePicker'
 import { LIMIT, useNewsroom, type Article, type Feed, type Newsroom } from '@shared/newsroom/useNewsroom'
 import { ReaderProvider, useReader } from './Reader'
@@ -20,11 +22,80 @@ function useLink() {
 
 const spring = { type: 'spring', bounce: 0.18, duration: 0.5 } as const
 
+function useMedia(query: string) {
+  const [on, setOn] = useState(() => matchMedia(query).matches)
+  useEffect(() => {
+    const m = matchMedia(query), change = () => setOn(m.matches)
+    m.addEventListener('change', change)
+    return () => m.removeEventListener('change', change)
+  }, [query])
+  return on
+}
+
+/** Wider than a phone (Hermes Desktop's Apps page, a browser): the tabs move to a top bar, with no room kept for
+ *  Talaria's floating buttons. Tailwind's `lg:` restyles from 1024px. */
+export const useWide = () => useMedia('(min-width: 760px)')
+/** Room for the edition picker and search in a rail beside the stories; narrower, they sit side by side above. */
+const useRail = () => useMedia('(min-width: 1120px)')
+
+export const meta = { title: 'Newsroom', icon: './favicon.svg', theme: { light: '#f6f8fc', dark: '#111317' } }
+
 export default function App() {
+  return <MotionConfig reducedMotion="user"><Newsroom /></MotionConfig>
+}
+
+function Newsroom() {
   const nr = useNewsroom()
+  const wide = useWide(), roomy = useRail()
   useVoteSync(nr)
+  useSearchKey()
   if (nr.phase === 'setup') return <Setup nr={nr} />
   if (nr.phase === 'collecting') return <Collecting nr={nr} />
+  const body = (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.main key={nr.mode + (nr.current?.id ?? '')} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>
+        {nr.mode === 'preferences' ? <Preferences nr={nr} /> : <Feed nr={nr} />}
+      </motion.main>
+    </AnimatePresence>
+  )
+  if (wide) {
+    const rail = roomy && nr.mode !== 'preferences'
+    return (
+      <ReaderProvider nr={nr} Source={Source} Topic={Topic}>
+      <div className="mx-auto max-w-[1240px] px-6 pb-16 min-[1120px]:px-10">
+        <header className="sticky top-0 z-10 -mx-6 flex h-[68px] items-center gap-6 border-b border-[var(--hair)] bg-[var(--bg)]/80 px-6 backdrop-blur-xl backdrop-saturate-150 min-[1120px]:-mx-10 min-[1120px]:px-10">
+          <Masthead nr={nr} />
+          <div className="flex-1" />
+          <Nav nr={nr} wide />
+        </header>
+        <div className={rail ? 'mt-8 grid grid-cols-[minmax(0,1fr)_340px] items-start gap-12' : roomy || nr.mode === 'preferences' ? 'mx-auto mt-6 max-w-[720px]' : 'mt-6'}>
+          <div className="min-w-0">
+            {!roomy && nr.mode !== 'preferences' && (
+              <div className="mb-6 grid grid-cols-2 items-start gap-3 [&>*]:mt-0 [&>*]:max-w-none">
+                {nr.mode === 'briefing' ? <EditionBar nr={nr} /> : <span />}
+                <SearchField nr={nr} />
+              </div>
+            )}
+            <Notices nr={nr} />
+            <SectionHead nr={nr} />
+            {body}
+          </div>
+          {rail && (
+            <aside className="sticky top-[100px] max-h-[calc(100dvh-116px)] overflow-y-auto pb-2 [&>*:first-child]:mt-0">
+              {nr.mode === 'briefing' && <EditionBar nr={nr} />}
+              <SearchField nr={nr} />
+              <p className="mt-2.5 px-1 text-[12px] text-[var(--faint)]">
+                Press <kbd className="rounded-[5px] border border-[var(--line)] bg-[var(--surface)] px-1.5 py-[1px] font-sans text-[11px] text-[var(--muted)]">/</kbd> to search
+              </p>
+            </aside>
+          )}
+        </div>
+        <Toast nr={nr} />
+      <WhyLess nr={nr} />
+      </div>
+      </ReaderProvider>
+    )
+  }
   return (
     <ReaderProvider nr={nr} Source={Source} Topic={Topic}>
     <div className="mx-auto max-w-[1100px] px-4 min-[700px]:px-7"
@@ -34,25 +105,48 @@ export default function App() {
       <Notices nr={nr} />
       {nr.mode !== 'preferences' && <SearchField nr={nr} />}
       <SectionHead nr={nr} />
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.main key={nr.mode + (nr.current?.id ?? '')} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>
-          {nr.mode === 'preferences' ? <Preferences nr={nr} /> : <Feed nr={nr} />}
-        </motion.main>
-      </AnimatePresence>
+      {body}
       <Toast nr={nr} />
+      <WhyLess nr={nr} />
       <Nav nr={nr} />
     </div>
     </ReaderProvider>
   )
 }
 
-/** Send the phone's votes to the editor (reader-feedback.json) a moment after they change. Quietly does nothing
- *  where actions can't run: the votes still rank this device's edition. */
+/** "/" jumps to the search field, as on most of the web, unless you're already typing somewhere. */
+function useSearchKey() {
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const typing = e.target instanceof Element && e.target.closest('input, textarea, [contenteditable]')
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || typing) return
+      const field = document.getElementById('search')
+      if (field) { e.preventDefault(); field.focus() }
+    }
+    addEventListener('keydown', key)
+    return () => removeEventListener('keydown', key)
+  }, [])
+}
+
+/** This device's id for the editor's feedback file, so each device's votes are kept apart (feedback.py). */
+let deviceId: string | undefined
+function device() {
+  try {
+    deviceId ??= localStorage.getItem('newsroom-device-v1') ?? undefined
+    if (!deviceId) localStorage.setItem('newsroom-device-v1', (deviceId = crypto.randomUUID()))
+  } catch {
+    deviceId ??= crypto.randomUUID()
+  }
+  return deviceId
+}
+
+/** Send this device's votes to the editor (reader-feedback.json) a moment after they change, a 👎's reason and
+ *  note included. Quietly does nothing where actions can't run: the votes still rank this device's edition. */
 function useVoteSync(nr: Newsroom) {
-  const key = JSON.stringify(Object.keys(nr.vote).sort().map((k) => [k, nr.vote[k].value]))
+  const key = JSON.stringify(Object.keys(nr.vote).sort().map((k) => [k, nr.vote[k].value, nr.vote[k].reason, nr.vote[k].note]))
   useEffect(() => {
     if (nr.phase !== 'ready') return
-    const t = setTimeout(() => action('feedback', { votes: Object.values(nr.vote) }).catch(() => {}), 2500)
+    const t = setTimeout(() => action('feedback', { device: device(), votes: Object.values(nr.vote) }).catch(() => {}), 2500)
     return () => clearTimeout(t)
   }, [key, nr.phase])
 }
@@ -76,9 +170,10 @@ function Mark() {
 function Masthead({ nr }: { nr: Newsroom }) {
   const { scrollY } = useScroll()
   const fade = useTransform(scrollY, [0, 80], [1, 0.35])
+  const wide = useWide()
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
   return (
-    <motion.header style={{ opacity: fade }} className="flex items-center gap-3 pt-1">
+    <motion.header style={{ opacity: wide ? 1 : fade }} className={`flex items-center gap-3 ${wide ? '' : 'pt-1'}`}>
       <motion.div initial={{ scale: 0.6, rotate: -12, opacity: 0 }} animate={{ scale: 1, rotate: 0, opacity: 1 }} transition={{ type: 'spring', bounce: 0.5, duration: 0.7 }}><Mark /></motion.div>
       <div className="min-w-0">
         <h1 className="display text-[25px] leading-[1.05] font-[650] tracking-[-0.02em]">Newsroom</h1>
@@ -98,7 +193,7 @@ function EditionBar({ nr }: { nr: Newsroom }) {
     <section className="mt-4 overflow-hidden rounded-[18px] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow)] min-[700px]:max-w-[480px]">
       <div className="grid grid-cols-[44px_1fr_44px] items-center p-0.5">
         <button className="act disabled:opacity-30" disabled={!nr.older} aria-label="Previous edition" onClick={() => go(nr.older?.id)}><ChevronLeft size={19} /></button>
-        <button className="flex h-12 flex-col items-center justify-center rounded-[14px] active:bg-[var(--surface-2)]" aria-expanded={p.open} onClick={p.toggle}>
+        <button id="edition-picker" className="flex h-12 flex-col items-center justify-center rounded-[14px] transition-colors hover:bg-[var(--surface-2)] active:bg-[var(--surface-2)]" aria-expanded={p.open} onClick={p.toggle}>
           <span className="flex items-center gap-1.5 text-[14.5px] font-[620] tabular-nums">
             {ed ? `${editionDay(ed.editedAt)}, ${editionTime(ed.editedAt)}` : <span className="shimmer h-4 w-28 rounded" />}
             <motion.span animate={{ rotate: p.open ? 180 : 0 }}><ChevronDown size={15} className="text-[var(--muted)]" /></motion.span>
@@ -196,8 +291,8 @@ function SearchField({ nr }: { nr: Newsroom }) {
   return (
     <label className="group mt-3 flex h-12 items-center gap-2.5 rounded-[14px] border border-[var(--line)] bg-[var(--surface)] px-3.5 transition-shadow focus-within:border-[var(--blue)] focus-within:shadow-[0_0_0_3px_var(--tint)] min-[700px]:max-w-[480px]">
       <Search size={17} className="text-[var(--muted)] group-focus-within:text-[var(--blue)]" />
-      <input ref={ref} value={nr.query} onChange={(e) => nr.setQuery(e.target.value)} type="search" enterKeyHint="search"
-        placeholder={nr.mode === 'saved' ? 'Search saved stories' : 'Search this edition'}
+      <input id="search" ref={ref} value={nr.query} onChange={(e) => nr.setQuery(e.target.value)} type="search" enterKeyHint="search"
+        placeholder={nr.mode === 'saved' ? 'Search your reading list' : nr.mode === 'liked' ? 'Search what you liked' : 'Search this edition'}
         className="h-full min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-[var(--faint)] [&::-webkit-search-cancel-button]:hidden" />
       <AnimatePresence>
         {nr.query && (
@@ -217,9 +312,11 @@ function SectionHead({ nr }: { nr: Newsroom }) {
     return nr.query ? <p className="mt-4 text-[12.5px] font-[600] text-[var(--muted)]">{nr.total} matching {nr.total === 1 ? 'story' : 'stories'}</p> : null
   }
   if (nr.mode === 'preferences') return <h2 className="display mt-6 text-[23px] leading-tight font-[650] tracking-[-0.015em]">Preferences</h2>
-  const title = 'Saved stories'
+  const title = nr.mode === 'liked' ? 'Liked' : 'Read later'
   const count = `${nr.total} ${nr.total === 1 ? 'story' : 'stories'}`
-  const sub = 'Saved on this device'
+  const sub = nr.mode === 'liked'
+    ? 'Everything you gave a 👍, newest first'
+    : nr.shared === false ? 'Saved on this device; your other devices will get them once it syncs' : 'Newest first · on all your devices'
   return (
     <div className="mt-6">
       <div className="flex items-baseline justify-between gap-3">
@@ -263,23 +360,24 @@ function Feed({ nr }: { nr: Newsroom }) {
     <LayoutGroup>
       {nr.leads[0] && <Cover a={nr.leads[0]} nr={nr} />}
       {nr.leads.length > 1 && (
-        <section aria-label="More key developments" className="mt-7">
+        <section aria-label="More key developments" className="mt-7 lg:mt-10">
           <h3 className="text-[12px] font-[700] tracking-[0.07em] text-[var(--muted)] uppercase">More key developments</h3>
-          <div className="no-scrollbar -mx-4 mt-2.5 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-px-4 px-4 pb-2 min-[700px]:mx-0 min-[700px]:px-0">
+          <div className="no-scrollbar -mx-4 mt-2.5 flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-px-4 px-4 pb-2 min-[700px]:mx-0 min-[700px]:px-0 min-[760px]:grid min-[760px]:grid-cols-2 min-[760px]:gap-4 min-[760px]:overflow-visible min-[760px]:pb-0">
             {nr.leads.slice(1).map((a, i) => <Feature key={a.id} a={a} nr={nr} i={i} only={nr.leads.length === 2} />)}
           </div>
         </section>
       )}
       {nr.rows.length > 0 && (
-        <section aria-label="Supporting coverage" className="mt-7 min-[700px]:max-w-[860px]">
+        <section aria-label="Supporting coverage" className="mt-7 min-[700px]:max-w-[860px] lg:mt-10">
           <h3 className="text-[12px] font-[700] tracking-[0.07em] text-[var(--muted)] uppercase">
-            {nr.mode === 'saved' ? 'Your reading list' : nr.leads.length ? 'Also worth your attention' : 'Worth your attention'}
+            {nr.mode === 'saved' ? 'Your reading list' : nr.mode === 'liked' ? 'Stories you liked' : nr.leads.length ? 'Also worth your attention' : 'Worth your attention'}
           </h3>
           <AnimatePresence initial={false}>
             {nr.rows.map((a, i) => <Row key={a.id} a={a} nr={nr} i={i} rank={nr.mode === 'briefing' ? nr.leads.length + i + 1 : undefined} />)}
           </AnimatePresence>
         </section>
       )}
+      <Discover nr={nr} />
       <Boundary nr={nr} />
     </LayoutGroup>
   )
@@ -299,7 +397,7 @@ function Topic({ a, keyStory, className = '' }: { a: Article; keyStory?: boolean
   const tag = tagOf(a), color = TOPICS[tag] ?? 'var(--muted)'
   return (
     <span className={`flex shrink-0 items-center gap-1 text-[11px] font-[650] ${className}`} style={{ color }}>
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />{keyStory ? 'Key · ' : ''}{tag}
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />{a.update ? 'Update · ' : ''}{keyStory ? 'Key · ' : ''}{tag}
     </span>
   )
 }
@@ -321,12 +419,12 @@ function Cover({ a, nr }: { a: Article; nr: Newsroom }) {
   const glow = useAmbient(nr.imageOf(a))
   return (
     <motion.article id={`story-${a.id}`} layout="position" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.1 }}
-      className="relative -mx-4 mt-6 scroll-mt-24 min-[700px]:mx-0 min-[700px]:max-w-[860px]">
+      className="relative -mx-4 mt-6 scroll-mt-24 min-[700px]:mx-0 min-[700px]:max-w-[860px] lg:mt-0 lg:max-w-none">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-x-0 top-[30%] h-[70%] opacity-40 blur-3xl transition-colors duration-700 dark:opacity-30"
           style={{ background: glow ? `radial-gradient(70% 60% at 50% 20%, ${glow}, transparent 70%)` : undefined }} />
       </div>
-      <a {...link(a)} aria-label={`Read: ${a.title}`} className="relative block overflow-hidden bg-[var(--surface-2)] min-[700px]:rounded-[22px]">
+      <a {...link(a)} aria-label={`Read: ${a.title}`} className="relative block overflow-hidden bg-[var(--surface-2)] min-[700px]:rounded-[22px] lg:ring-1 lg:ring-[var(--hair)]">
         {!loaded && <div className="shimmer absolute inset-0" />}
         <motion.img src={nr.imageOf(a)} alt="" decoding="async" onLoad={() => setLoaded(true)} onError={() => nr.imageFailed(a.id)}
           initial={false} animate={{ opacity: loaded ? 1 : 0, scale: loaded ? 1 : 1.05 }} transition={{ duration: 0.7 }} className="aspect-[1.9] w-full object-cover" />
@@ -337,8 +435,8 @@ function Cover({ a, nr }: { a: Article; nr: Newsroom }) {
           <Topic a={a} />
         </div>
         <a {...link(a)}
-          className="display mt-2 block text-[27px] leading-[1.1] font-[720] tracking-[-0.025em] text-[var(--text)] active:text-[var(--blue)]">{a.title}</a>
-        <p className="mt-2 text-[15.5px] leading-[1.5] text-[var(--muted)]">{a.why}</p>
+          className="display mt-2 block text-[27px] leading-[1.1] font-[720] tracking-[-0.025em] text-[var(--text)] transition-colors hover:text-[var(--blue)] active:text-[var(--blue)] lg:mt-3 lg:text-[36px] lg:leading-[1.08] lg:tracking-[-0.028em]">{a.title}</a>
+        <p className="mt-2 text-[15.5px] leading-[1.5] text-[var(--muted)] lg:mt-3 lg:max-w-[680px] lg:text-[17px]">{a.why}</p>
         <div className="mt-2.5"><Source a={a} compact /></div>
         <Foot a={a} nr={nr} />
       </div>
@@ -352,7 +450,7 @@ function Feature({ a, nr, i, only }: { a: Article; nr: Newsroom; i: number; only
   return (
     <motion.article id={`story-${a.id}`} layout="position" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }}
       transition={{ ...spring, delay: 0.15 + i * 0.08 }}
-      className={`flex shrink-0 snap-start scroll-mt-24 flex-col overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow)] ${only ? 'w-full' : 'w-[80%] min-[700px]:w-[calc(50%-6px)]'}`}>
+      className={`flex shrink-0 snap-start scroll-mt-24 flex-col overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow)] transition-shadow duration-300 hover:shadow-[var(--shadow-lift)] min-[760px]:w-auto ${only ? 'w-full min-[760px]:col-span-2' : 'w-[80%] min-[700px]:w-[calc(50%-6px)]'}`}>
       <a {...link(a)} aria-label={`Read: ${a.title}`} className="relative block overflow-hidden bg-[var(--surface-2)]">
         {!loaded && <div className="shimmer absolute inset-0" />}
         <motion.img src={nr.imageOf(a)} alt="" decoding="async" onLoad={() => setLoaded(true)} onError={() => nr.imageFailed(a.id)}
@@ -362,7 +460,7 @@ function Feature({ a, nr, i, only }: { a: Article; nr: Newsroom; i: number; only
         <Topic a={a} keyStory className="mb-1" />
         <Source a={a} compact />
         <a {...link(a)}
-          className="display mt-1.5 text-[17.5px] leading-[1.22] font-[660] tracking-[-0.012em] text-[var(--text)] active:text-[var(--blue)]">{a.title}</a>
+          className="display mt-1.5 text-[17.5px] leading-[1.22] font-[660] tracking-[-0.012em] text-[var(--text)] transition-colors hover:text-[var(--blue)] active:text-[var(--blue)] lg:text-[19px]">{a.title}</a>
         <p className="mt-1 line-clamp-3 text-[13.5px] leading-[1.5] text-[var(--muted)]">{a.why}</p>
         <div className="mt-auto"><Foot a={a} nr={nr} lean /></div>
       </div>
@@ -383,13 +481,47 @@ function Row({ a, nr, i, rank }: { a: Article; nr: Newsroom; i: number; rank?: n
       )}
       <div className="min-w-0">
         <Source a={a} />
-        <a {...link(a)} className={`display mt-1 block text-[18px] leading-[1.3] font-[620] tracking-[-0.01em] active:text-[var(--blue)] ${read.has(a.id) ? 'text-[var(--muted)]' : ''}`}>
+        <a {...link(a)} className={`display mt-1 block text-[18px] leading-[1.3] font-[620] tracking-[-0.01em] transition-colors hover:text-[var(--blue)] active:text-[var(--blue)] lg:text-[19px] ${read.has(a.id) ? 'text-[var(--muted)]' : ''}`}>
           {read.has(a.id) && <span className="mr-1.5 inline-flex -translate-y-[2px] items-center gap-0.5 rounded-full bg-[var(--surface-2)] px-1.5 py-[1px] align-middle text-[10.5px] font-[650] text-[var(--faint)]"><Check size={11} strokeWidth={3} />Read</span>}
           {a.title}
         </a>
-        <p className="mt-1 text-[14px] leading-[1.55] text-[var(--muted)]">{a.why || 'Saved for your reading list.'}</p>
+        {a.update && a.updateNote && <p className="mt-1 text-[13.5px] font-[600] leading-[1.5] text-[var(--text)]">What’s new: {a.updateNote}</p>}
+        <p className="mt-1 text-[14px] leading-[1.55] text-[var(--muted)] lg:text-[14.5px]">{a.why || a.summary || (nr.mode === 'liked' ? 'You liked this.' : 'Saved to read later.')}</p>
         <Foot a={a} nr={nr} />
       </div>
+    </motion.article>
+  )
+}
+
+/** The editor's few picks from beyond the reader's topics, after the edition's own stories. */
+function Discover({ nr }: { nr: Newsroom }) {
+  if (!nr.discover.length) return null
+  return (
+    <section aria-label="Something different" className="mt-9 min-[700px]:max-w-[860px] lg:mt-12">
+      <h3 className="flex items-center gap-1.5 text-[12px] font-[700] tracking-[0.07em] text-[var(--muted)] uppercase"><Sparkles size={13} />Something different</h3>
+      <p className="mt-1 text-[13.5px] leading-[1.5] text-[var(--muted)]">From beyond your topics. 👍 and the editor explores more like it; 👎 and it won’t.</p>
+      {nr.discover.map((a, i) => (a.discovery === 'Comics' ? <Comic key={a.id} a={a} nr={nr} /> : <Row key={a.id} a={a} nr={nr} i={i} />))}
+    </section>
+  )
+}
+
+/** A comic is its picture: shown whole, at its own height, linking to its page (the reader has no text to show). */
+function Comic({ a, nr }: { a: Article; nr: Newsroom }) {
+  const src = nr.imageOf(a)
+  const page = { href: a.url, target: '_blank', rel: 'noopener noreferrer' }
+  return (
+    <motion.article id={`story-${a.id}`} layout initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={spring}
+      className="scroll-mt-24 border-b border-[var(--hair)] pt-4 pb-0.5">
+      <Source a={a} />
+      <a {...page} className="display mt-1 block text-[18px] leading-[1.3] font-[620] tracking-[-0.01em] transition-colors hover:text-[var(--blue)] active:text-[var(--blue)] lg:text-[19px]">{a.title}</a>
+      {src && (
+        <a {...page} aria-label={`Open the comic: ${a.title}`} className="mt-2.5 block overflow-hidden rounded-[14px] bg-white ring-1 ring-[var(--hair)]">
+          <img src={src} alt={a.summary || a.title} loading="lazy" decoding="async" onError={() => nr.imageFailed(a.id)} className="mx-auto max-w-full min-[700px]:max-w-[640px]" />
+        </a>
+      )}
+      {a.summary && <p className="mt-2 text-[14px] leading-[1.55] text-[var(--muted)] italic">{a.summary}</p>}
+      {a.why && <p className="mt-1 text-[14px] leading-[1.55] text-[var(--muted)]">{a.why}</p>}
+      <Foot a={a} nr={nr} />
     </motion.article>
   )
 }
@@ -454,13 +586,13 @@ function Boundary({ nr }: { nr: Newsroom }) {
         <motion.div initial={{ opacity: 0, scale: 0.96 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: true }} className="mt-6 flex flex-col items-center text-center">
           <motion.span initial={{ scale: 0 }} whileInView={{ scale: 1 }} viewport={{ once: true }} transition={{ type: 'spring', bounce: 0.55, delay: 0.1 }}
             className="grid h-12 w-12 place-items-center rounded-full bg-[var(--tint)] text-[var(--blue)]"><CircleCheck size={24} /></motion.span>
-          <h3 className="display mt-2.5 text-[18px] font-[650]">{nr.mode === 'saved' ? 'End of your reading list' : nr.query ? 'End of matching stories' : 'End of this edition'}</h3>
+          <h3 className="display mt-2.5 text-[18px] font-[650]">{nr.mode === 'saved' ? 'End of your reading list' : nr.mode === 'liked' ? 'That’s everything you liked' : nr.query ? 'End of matching stories' : 'End of this edition'}</h3>
           <p className="mt-0.5 max-w-[300px] text-[13.5px] text-[var(--muted)]">
-            {nr.mode === 'saved' ? 'Saved stories stay on this device.' : nr.archived ? 'This edition is preserved as published.'
+            {nr.mode === 'saved' ? 'Take a story off the list with its bookmark once you’re done with it.' : nr.mode === 'liked' ? 'Liking a story also brings more like it to your editions.' : nr.archived ? 'This edition is preserved as published.'
               : nr.query ? 'Clear your search to see the rest of the edition.' : `You’re caught up. The next edition arrives ${({ '6h': 'within six hours', '12h': 'within twelve hours', daily: 'tomorrow morning' } as const)[nr.settings?.frequency ?? '6h']}.`}
           </p>
           {nr.mode === 'briefing' && (
-            <button className="mt-2 flex h-11 items-center gap-1.5 text-[13.5px] font-[620] text-[var(--blue)]" onClick={() => { scrollTo({ top: 0, behavior: 'smooth' }); document.querySelector<HTMLButtonElement>('[aria-expanded]')?.click() }}>
+            <button className="mt-2 flex h-11 items-center gap-1.5 text-[13.5px] font-[620] text-[var(--blue)]" onClick={() => { scrollTo({ top: 0, behavior: 'smooth' }); const picker = document.getElementById('edition-picker'); if (picker?.getAttribute('aria-expanded') === 'false') picker.click() }}>
               <CalendarDays size={15} /> Browse past editions
             </button>
           )}
@@ -471,12 +603,13 @@ function Boundary({ nr }: { nr: Newsroom }) {
 }
 
 function Empty({ nr }: { nr: Newsroom }) {
-  const [title, body] = nr.query ? ['No matching stories', 'Try a different search.'] : nr.mode === 'saved'
-    ? ['Your reading list starts here', 'Save a story with its bookmark and it waits for you here.']
+  const [title, body] = nr.query ? ['No matching stories', 'Try a different search.'] : nr.mode === 'liked'
+    ? ['Nothing liked yet', 'Give a story 👍 and you’ll find it here, on any of your devices.'] : nr.mode === 'saved'
+    ? ['Your reading list starts here', 'Save a story with its bookmark to read it later, here or on your other devices.']
     : ['Nothing picked here right now', 'No filler. Review hidden stories in Preferences or browse a past edition.']
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-10 flex flex-col items-center text-center">
-      <span className="grid h-14 w-14 place-items-center rounded-[18px] bg-[var(--surface-2)] text-[var(--muted)]">{nr.mode === 'saved' ? <Bookmark /> : <Inbox />}</span>
+      <span className="grid h-14 w-14 place-items-center rounded-[18px] bg-[var(--surface-2)] text-[var(--muted)]">{nr.mode === 'saved' ? <Bookmark /> : nr.mode === 'liked' ? <Heart /> : <Inbox />}</span>
       <h3 className="display mt-3 text-[18px] font-[650]">{title}</h3>
       <p className="mt-1 max-w-[280px] text-[14px] text-[var(--muted)]">{body}</p>
     </motion.div>
@@ -505,6 +638,7 @@ function Preferences({ nr }: { nr: Newsroom }) {
   return (
     <div className="mt-3 min-[700px]:max-w-[720px]">
       <Interests nr={nr} head={head} />
+      <Discovery nr={nr} head={head} />
       <Schedule nr={nr} head={head} />
       <SourcesList nr={nr} head={head} />
 
@@ -585,6 +719,29 @@ function Interests({ nr, head }: { nr: Newsroom; head: string }) {
   )
 }
 
+function Discovery({ nr, head }: { nr: Newsroom; head: string }) {
+  const [on, setOn] = useState(nr.settings?.discovery !== false)
+  const [error, setError] = useState<string>()
+  const change = async () => {
+    const next = !on
+    setOn(next); setError(undefined)
+    try { await action('settings', { op: 'save', discovery: next }); await nr.reload() }
+    catch (e) { setOn(!next); setError(e instanceof Error ? e.message : String(e)) }
+  }
+  return (
+    <section className="mt-7">
+      <h3 className={head}>Something different</h3>
+      <button role="switch" aria-checked={on} onClick={change} className="mt-2 flex w-full items-center gap-3 text-left">
+        <span className="flex-1 text-[14.5px] leading-[1.45]">A few picks from next to your topics now and then, and the odd comic. Your votes decide what stays.</span>
+        <span className={`relative h-[31px] w-[51px] shrink-0 rounded-full transition-colors ${on ? 'bg-[var(--green)]' : 'bg-[var(--line)]'}`}>
+          <motion.span className="absolute top-[2px] left-[2px] h-[27px] w-[27px] rounded-full bg-white shadow" animate={{ x: on ? 20 : 0 }} transition={spring} />
+        </span>
+      </button>
+      {error && <p className="mt-1 text-[13px] text-[var(--red)]">{error}</p>}
+    </section>
+  )
+}
+
 function Schedule({ nr, head }: { nr: Newsroom; head: string }) {
   const [freq, setFreq] = useState<Frequency>(nr.settings?.frequency ?? '6h')
   const [state, setState] = useState<string>()
@@ -659,16 +816,72 @@ function Chips({ label, tags, tone }: { label: string; tags: string[]; tone: 'bl
   )
 }
 
+/* ——— Why less ——— */
+
+/** After a 👎: what's off about it, in a tap, and a note to the editor if the reader wants. Above the reader too, so
+ *  it's in the page's body, not under the (inert) app. */
+function WhyLess({ nr }: { nr: Newsroom }) {
+  const [reason, setReason] = useState<Reason>()
+  const [note, setNote] = useState('')
+  const a = nr.asking
+  useEffect(() => { setReason(undefined); setNote('') }, [a?.id])
+  useEffect(() => {
+    if (!a) return
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') nr.explain() }
+    addEventListener('keydown', key)
+    return () => removeEventListener('keydown', key)
+  }, [a?.id])
+  return createPortal(
+    <AnimatePresence>
+      {a && (
+        <motion.div key="why" className="fixed inset-0 z-50 flex items-end justify-center bg-black/25 px-3 min-[760px]:items-center"
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => nr.explain()}>
+          <motion.section role="dialog" aria-modal aria-labelledby="why-title" onClick={(e) => e.stopPropagation()}
+            initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 30, opacity: 0 }} transition={spring}
+            className="w-full max-w-[460px] rounded-[22px] border border-[var(--line)] bg-[var(--surface)] p-4 shadow-[0_24px_60px_-20px_rgba(0,0,0,.45)]"
+            style={{ marginBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 id="why-title" className="display text-[18px] font-[680] tracking-[-0.01em]">What’s off about it?</h2>
+                <p className="mt-0.5 line-clamp-1 text-[12.5px] text-[var(--muted)]">{a.title}</p>
+              </div>
+              <button className="-mt-1 -mr-1 h-9 shrink-0 px-2 text-[13px] font-[620] text-[var(--blue)]" onClick={nr.undoAsking}>Undo</button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1.5" role="radiogroup" aria-label="Reason">
+              {(Object.entries(REASONS) as [Reason, string][]).map(([key, label]) => (
+                <button key={key} role="radio" aria-checked={reason === key} onClick={() => setReason(reason === key ? undefined : key)}
+                  className={`h-9 rounded-full px-3 text-[13px] font-[600] transition-colors ${reason === key ? 'bg-[var(--red-tint)] text-[var(--red)] ring-1 ring-[var(--red)]' : 'bg-[var(--surface-2)] text-[var(--text)] hover:bg-[var(--hair)]'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500}
+              placeholder="Anything to tell your editor? (optional)" aria-label="Note to your editor"
+              className="mt-3 w-full resize-none rounded-[14px] border border-[var(--line)] bg-[var(--bg)] p-3 text-[14.5px] outline-none placeholder:text-[var(--faint)] focus:border-[var(--blue)]" />
+            <div className="mt-2 flex gap-2">
+              <button onClick={() => nr.explain()} className="h-11 flex-1 rounded-full bg-[var(--surface-2)] text-[14.5px] font-[620]">Skip</button>
+              <button onClick={() => nr.explain(reason, note)} disabled={!reason && !note.trim()}
+                className="h-11 flex-1 rounded-full bg-[var(--blue)] text-[14.5px] font-[650] text-[var(--surface)] disabled:opacity-40">Send</button>
+            </div>
+          </motion.section>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body,
+  )
+}
+
 /* ——— Toast and navigation ——— */
 
 function Toast({ nr }: { nr: Newsroom }) {
+  const wide = useWide()
   useEffect(() => {
     if (!nr.toast) return
     const t = setTimeout(nr.dismissToast, 5000)
     return () => clearTimeout(t)
   }, [nr.toast])
   return (
-    <div className="pointer-events-none fixed inset-x-0 z-20 flex justify-center px-4" style={{ bottom: 'calc(env(safe-area-inset-bottom) + 84px)' }} role="status" aria-live="polite">
+    <div className="pointer-events-none fixed inset-x-0 z-20 flex justify-center px-4" style={{ bottom: wide ? '28px' : 'calc(env(safe-area-inset-bottom) + 84px)' }} role="status" aria-live="polite">
       <AnimatePresence>
         {nr.toast && (
           <motion.div key={nr.toast.message} initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} transition={spring}
@@ -683,25 +896,45 @@ function Toast({ nr }: { nr: Newsroom }) {
   )
 }
 
-function Nav({ nr }: { nr: Newsroom }) {
-  const tabs = [['briefing', 'For you', Newspaper], ['saved', 'Saved', Bookmark], ['preferences', 'Preferences', SlidersHorizontal]] as const
+function Nav({ nr, wide }: { nr: Newsroom; wide?: boolean }) {
+  const tabs = [['briefing', 'For you', Newspaper], ['saved', 'Read later', Bookmark], ['liked', 'Liked', Heart],
+    ['preferences', 'Preferences', SlidersHorizontal]] as const
   const savedCount = Object.keys(nr.saved).length
+  const choose = (m: (typeof tabs)[number][0], on: boolean) => (m === 'briefing' && on ? nr.open(null) : nr.setMode(m))
+  const badge = (m: string) => m === 'saved' && savedCount > 0 && (
+    <motion.span key={savedCount} initial={{ scale: 0.4 }} animate={{ scale: 1 }} transition={{ type: 'spring', bounce: 0.6 }}
+      className={`grid h-4 min-w-4 place-items-center rounded-full bg-[var(--blue)] px-1 text-[9.5px] font-[750] text-[var(--surface)] ${wide ? '' : 'absolute -top-1.5 -right-2.5'}`}>{savedCount}</motion.span>
+  )
+  if (wide) {
+    // A segmented control in the top bar: icon and label side by side.
+    return (
+      <nav className="flex rounded-full border border-[var(--line)] bg-[var(--surface)] p-1 shadow-[var(--shadow)]">
+        {tabs.map(([m, label, Icon]) => {
+          const on = nr.mode === m
+          return (
+            <button key={m} aria-pressed={on} onClick={() => choose(m, on)}
+              className={`relative flex h-9 items-center gap-2 rounded-full px-4 text-[13.5px] font-[620] transition-colors ${on ? 'text-[var(--blue)]' : 'text-[var(--muted)] hover:text-[var(--text)]'}`}>
+              {on && <motion.span layoutId="tab" transition={spring} className="absolute inset-0 rounded-full bg-[var(--tint)]" />}
+              <span className="relative flex items-center gap-2"><Icon size={16} strokeWidth={on ? 2.3 : 1.9} />{label}{badge(m)}</span>
+            </button>
+          )
+        })}
+      </nav>
+    )
+  }
   return (
     <nav className="fixed inset-x-0 z-10 flex justify-center px-4" style={{ bottom: 'calc(env(safe-area-inset-bottom) + 10px)' }}>
       <div className="flex w-full max-w-[400px] rounded-full border border-[var(--line)] bg-[var(--surface)]/80 p-1 shadow-[0_10px_36px_-10px_rgba(32,33,36,.35)] backdrop-blur-xl backdrop-saturate-150">
         {tabs.map(([m, label, Icon]) => {
           const on = nr.mode === m
           return (
-            <button key={m} aria-pressed={on} onClick={() => (m === 'briefing' && on ? nr.open(null) : nr.setMode(m))}
+            <button key={m} aria-pressed={on} onClick={() => choose(m, on)}
               className="relative flex h-12 flex-1 flex-col items-center justify-center rounded-full">
               {on && <motion.span layoutId="tab" transition={spring} className="absolute inset-0 rounded-full bg-[var(--tint)]" />}
               <span className={`relative flex flex-col items-center gap-[1px] ${on ? 'text-[var(--blue)]' : 'text-[var(--muted)]'}`}>
                 <span className="relative">
                   <Icon size={19} strokeWidth={on ? 2.3 : 1.8} />
-                  {m === 'saved' && savedCount > 0 && (
-                    <motion.span key={savedCount} initial={{ scale: 0.4 }} animate={{ scale: 1 }} transition={{ type: 'spring', bounce: 0.6 }}
-                      className="absolute -top-1.5 -right-2.5 grid h-4 min-w-4 place-items-center rounded-full bg-[var(--blue)] px-1 text-[9.5px] font-[750] text-[var(--surface)]">{savedCount}</motion.span>
-                  )}
+                  {badge(m)}
                 </span>
                 <span className="text-[10.5px] font-[650]">{label}</span>
               </span>

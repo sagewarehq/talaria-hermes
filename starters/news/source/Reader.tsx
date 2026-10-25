@@ -35,7 +35,7 @@ export function ReaderProvider({ nr, children, Source, Topic }: {
   const open = (x: string) => { history.pushState({ ...history.state, read: x }, ''); setId(x); markRead(x) }
   const go = (x: string) => { history.replaceState({ ...history.state, read: x }, ''); setId(x); markRead(x) }
   const close = () => (history.state?.read ? history.back() : setId(null))
-  const list = nr.mode === 'saved' ? Object.values(nr.saved) : nr.ordered
+  const list = nr.ordered
   const a = list.find((x) => x.id === id) ?? nr.saved[id ?? ''] ?? nr.ordered.find((x) => x.id === id)
   return (
     <Ctx.Provider value={{ open, read }}>
@@ -60,6 +60,17 @@ function Sheet({ a, list, nr, go, close, Source, Topic }: {
   useEffect(() => { scroller.current?.scrollTo({ top: 0 }); prefetch(list.slice(at + 1, at + 3).map((x) => x.id)) }, [a.id])
   useEffect(() => { document.documentElement.style.overflow = 'hidden'; return () => { document.documentElement.style.overflow = '' } }, [])
   useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(undefined), 2200); return () => clearTimeout(t) }, [note])
+  // A keyboard closes the reader with Esc and moves on with the right arrow.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.target instanceof Element && e.target.closest('input, textarea'))) return
+      if (document.getElementById('why-title')) return // the "what's off?" sheet is open over the reader
+      if (e.key === 'Escape') close()
+      else if (e.key === 'ArrowRight' && next) go(next.id)
+    }
+    addEventListener('keydown', key)
+    return () => removeEventListener('keydown', key)
+  }, [next?.id])
   const share = async () => {
     try {
       if (navigator.share) await navigator.share({ title: a.title, url: a.url })
@@ -67,7 +78,7 @@ function Sheet({ a, list, nr, go, close, Source, Topic }: {
     } catch { /* cancelled */ }
   }
   const v = nr.vote[a.id]?.value, saved = Boolean(nr.saved[a.id])
-  const tool = 'grid h-11 w-11 place-items-center rounded-full text-[var(--muted)] transition active:scale-90'
+  const tool = 'grid h-11 w-11 place-items-center rounded-full text-[var(--muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--text)] active:scale-90'
   return (
     <motion.div role="dialog" aria-modal aria-label={a.title} initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
       transition={{ type: 'spring', bounce: 0.08, duration: 0.5 }} className="fixed inset-0 z-30 bg-[var(--bg)]">
@@ -97,7 +108,7 @@ function Sheet({ a, list, nr, go, close, Source, Topic }: {
           <span className="mx-0.5 h-6 w-px bg-[var(--line)]" />
           <button className={`${tool} ${v === 1 ? '!text-[var(--blue)]' : ''}`} aria-pressed={v === 1} aria-label="More like this" onClick={() => nr.rate(a, 1)}><Glyph Icon={ThumbsUp} on={v === 1} size={18} /></button>
           <button className={`${tool} ${v === -1 ? '!text-[var(--red)]' : ''}`} aria-pressed={v === -1} aria-label="Less like this" onClick={() => nr.rate(a, -1)}><Glyph Icon={ThumbsDown} on={v === -1} size={18} /></button>
-          <button className={`${tool} ${saved ? '!text-[var(--blue)]' : ''}`} aria-pressed={saved} aria-label={saved ? 'Unsave' : 'Save'} onClick={() => nr.toggleSave(a)}><Glyph Icon={Bookmark} on={saved} size={18} /></button>
+          <button className={`${tool} ${saved ? '!text-[var(--blue)]' : ''}`} aria-pressed={saved} aria-label={saved ? 'Remove from Read later' : 'Read later'} onClick={() => nr.toggleSave(a)}><Glyph Icon={Bookmark} on={saved} size={18} /></button>
           <button className={tool} aria-label="Share" onClick={share}><Share size={18} /></button>
           <a className={tool} aria-label={`Open on ${host(a.url)}`} href={a.url} target="_blank" rel="noopener noreferrer"><Compass size={19} /></a>
           {next && (
@@ -126,7 +137,7 @@ function Body({ a, nr, Source, Topic }: { a: Article; nr: Newsroom; Source: (p: 
   return (
     <>
       <Topic a={a} keyStory={a.key} />
-      <h1 className="display mt-2 text-[28px] leading-[1.12] font-[720] tracking-[-0.022em]">{a.title}</h1>
+      <h1 className="display mt-2 text-[28px] leading-[1.12] font-[720] tracking-[-0.022em] lg:text-[36px] lg:leading-[1.08]">{a.title}</h1>
       <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
         <Source a={a} compact />
         {article?.byline && <span className="text-[12px] text-[var(--muted)]">· {article.byline}</span>}
@@ -135,7 +146,7 @@ function Body({ a, nr, Source, Topic }: { a: Article; nr: Newsroom; Source: (p: 
       {image && <img src={image} alt="" className="mt-4 aspect-[1.9] w-full rounded-[16px] object-cover" />}
       <aside className="mt-4 rounded-[16px] bg-[var(--tint)] p-3.5 text-[14px] leading-[1.5]">
         <p className="text-[11px] font-[700] tracking-[0.07em] text-[var(--blue)] uppercase">Why it’s in your edition</p>
-        <p className="mt-1 text-[var(--text)]">{a.why || 'You saved this story.'}</p>
+        <p className="mt-1 text-[var(--text)]">{a.why || (nr.vote[a.id]?.value === 1 ? 'You liked this story.' : 'You saved it to read later.')}</p>
         <p className={`mt-1.5 flex items-center gap-1.5 text-[12.5px] font-[620] ${reviewed ? 'text-[var(--green)]' : 'text-[var(--muted)]'}`}>
           {reviewed ? <ShieldCheck size={14} /> : <Newspaper size={14} />}{reviewed ? 'Canonical source reviewed' : 'Feed metadata only'}
         </p>
@@ -144,7 +155,7 @@ function Body({ a, nr, Source, Topic }: { a: Article; nr: Newsroom; Source: (p: 
         {loading ? (
           <div className="space-y-3">{[100, 96, 99, 70, 0, 98, 94, 60].map((w, i) => w ? <div key={i} className="shimmer h-4 rounded" style={{ width: `${w}%` }} /> : <div key={i} className="h-2" />)}</div>
         ) : article?.ok && article.blocks ? (
-          <Blocks blocks={article.blocks} />
+          <Blocks blocks={article.blocks} hero={Boolean(image)} />
         ) : (
           <div className="rounded-[18px] border border-[var(--line)] bg-[var(--surface)] p-4 text-center font-sans">
             {a.summary && <p className="text-left text-[16px] leading-[1.6] text-[var(--text)]">{a.summary}</p>}
@@ -166,14 +177,42 @@ function Body({ a, nr, Source, Topic }: { a: Article; nr: Newsroom; Source: (p: 
   )
 }
 
-function Blocks({ blocks }: { blocks: Block[] }) {
+// Only addresses extract.py rebuilt from a player's id get a frame.
+const PLAYER = /^https:\/\/(www\.youtube-nocookie\.com\/embed\/|player\.vimeo\.com\/video\/|flo\.uri\.sh\/|datawrapper\.dwcdn\.net\/)/
+
+function Blocks({ blocks, hero }: { blocks: Block[]; hero: boolean }) {
+  // The page's own lead photo is the hero already shown above the story.
+  const lead = blocks.findIndex((b) => b.t === 'p')
   return (
     <>
       {blocks.map((b, i) =>
-        b.t === 'h' ? <h2 key={i} className="display mt-7 mb-2 text-[20px] leading-[1.25] font-[680] tracking-[-0.01em]">{b.text}</h2>
+        b.t === 'img' ? (hero && i < lead ? null : <Photo key={i} src={b.src} alt={b.alt ?? ''} />)
+        : b.t === 'embed' ? (PLAYER.test(b.src) ? <Embed key={i} {...b} /> : null)
+        : b.t === 'h' ? <h2 key={i} className="display mt-7 mb-2 text-[20px] leading-[1.25] font-[680] tracking-[-0.01em]">{b.text}</h2>
         : b.t === 'li' ? <p key={i} className="relative mb-2 pl-5 before:absolute before:left-1 before:top-[0.7em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-[var(--blue)]">{b.text}</p>
         : b.t === 'q' ? <blockquote key={i} className="my-5 border-l-[3px] border-[var(--blue)] pl-4 italic text-[var(--muted)]">{b.text}</blockquote>
         : <p key={i} className="mb-4">{b.text}</p>)}
     </>
+  )
+}
+
+/** A photo or chart from the story, shown from the publisher's site; gone if it doesn't load. */
+function Photo({ src, alt }: { src: string; alt: string }) {
+  const [broken, setBroken] = useState(false)
+  if (broken) return null
+  return (
+    <img src={src} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setBroken(true)}
+      className="my-6 max-h-[80vh] w-full rounded-[14px] bg-[var(--surface-2)] object-contain" />
+  )
+}
+
+/** A video or interactive chart where the story has it, played in place from its own player. */
+function Embed({ kind, src, ratio }: { kind: 'video' | 'chart'; src: string; ratio?: number }) {
+  return (
+    <iframe src={src} title={kind === 'video' ? 'Video' : 'Chart'} loading="lazy" allowFullScreen
+      allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+      sandbox="allow-scripts allow-same-origin allow-presentation allow-popups"
+      className={`my-6 block w-full rounded-[14px] border-0 ${kind === 'chart' ? 'bg-white' : 'bg-black'}`}
+      style={{ aspectRatio: String(kind === 'video' ? 16 / 9 : Math.min(Math.max(ratio ?? 4 / 3, 0.6), 2.4)) }} />
   )
 }

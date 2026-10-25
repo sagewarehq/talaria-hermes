@@ -150,34 +150,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.send(200, body.encode(), "application/json")
 
     def app(self, name: str, path: str):
-        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name):
-            return self.send(404, b"Not an app name", "text/plain")
-        if path.startswith("/lib/"):
-            return self.file(LIB / path[len("/lib/"):], LIB)
-        root = (apps_root() / name).resolve()
-        if not root.is_dir():
-            return self.send(404, f"No app named {name} in {apps_root()}".encode(), "text/plain")
-        rel = urllib.request.url2pathname(path.lstrip("/"))
-        target = root / rel
-        if path.endswith("/") or target.is_dir():
-            target = target / "index.html"
-        if not target.exists() and not Path(rel).suffix:
-            target = root / "index.html"  # a route of a one-page app
-        return self.file(target, root)
-
-    def file(self, target: Path, within: Path):
-        try:
-            target = target.resolve()
-            target.relative_to(within.resolve())  # never climb out of the folder
-            data = target.read_bytes()
-        except (ValueError, OSError):
-            return self.send(404, b"Not found", "text/plain")
-        kind = TYPES.get(target.suffix.lower(), "application/octet-stream")
-        if kind.startswith("text/html"):
-            data = inject(data)
-        elif target.suffix.lower() in COMPILED:
-            data = compiled(target, "/" + target.relative_to(within.resolve()).as_posix(), data)
-        return self.send(200, data, kind)
+        return self.send(*resolve(name, path))
 
     def send(self, code: int, body: bytes, kind: str):
         self.send_response(code)
@@ -186,6 +159,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+
+def resolve(name: str, path: str) -> tuple[int, bytes, str]:
+    """What app ``name`` serves at ``path``: (status, body, content type). One answer for the preview, Desktop's
+    per-app ports and ``/talaria fetch``, so every way in gets the same bytes."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name):
+        return 404, b"Not an app name", "text/plain"
+    if path.startswith("/lib/"):
+        return read_file(LIB / path[len("/lib/"):], LIB)
+    root = (apps_root() / name).resolve()
+    if not root.is_dir():
+        return 404, f"No app named {name} in {apps_root()}".encode(), "text/plain"
+    rel = urllib.request.url2pathname(path.lstrip("/"))
+    target = root / rel
+    if path.endswith("/") or target.is_dir():
+        target = target / "index.html"
+    if not target.exists() and not Path(rel).suffix:
+        target = root / "index.html"  # a route of a one-page app
+    return read_file(target, root)
+
+
+def read_file(target: Path, within: Path) -> tuple[int, bytes, str]:
+    try:
+        target = target.resolve()
+        target.relative_to(within.resolve())  # never climb out of the folder
+        data = target.read_bytes()
+    except (ValueError, OSError):
+        return 404, b"Not found", "text/plain"
+    kind = TYPES.get(target.suffix.lower(), "application/octet-stream")
+    if kind.startswith("text/html"):
+        data = inject(data)
+    elif target.suffix.lower() in COMPILED:
+        data = compiled(target, "/" + target.relative_to(within.resolve()).as_posix(), data)
+    return 200, data, kind
 
 
 def actions_module():

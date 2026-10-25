@@ -1,7 +1,8 @@
-"""Newsroom's settings: get them, or save the topics, interests and timezone (the first-run flow and Preferences).
+"""Newsroom's settings: get them, or save the topics, interests, timezone and whether the editor may add a few
+discovery picks from beyond them (the first-run flow and Preferences).
 
-    {"op": "get"}                                   → {"configured", "settings", "topics"}
-    {"op": "save", "topics", "interests", "timezone"} → the saved settings
+    {"op": "get"}                                                → {"configured", "settings", "topics"}
+    {"op": "save", "topics", "interests", "timezone", "discovery"} → the saved settings
 """
 import json
 import sys
@@ -23,5 +24,6 @@ if req.get("op") == "save":
         ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError):
         sys.exit(f"Unknown timezone {tz}.")
-    s = newsroom.save({**s, "topics": topics, "interests": interests, "timezone": tz})
+    discovery = req["discovery"] if isinstance(req.get("discovery"), bool) else s["discovery"]
+    s = newsroom.save({**s, "topics": topics, "interests": interests, "timezone": tz, "discovery": discovery})
 print(json.dumps({"configured": newsroom.configured(), "settings": s, "topics": newsroom.TOPICS}))

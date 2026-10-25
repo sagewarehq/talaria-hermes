@@ -36,6 +36,8 @@ PACKAGES = {
     "motion": "14.6.0", "lucide-react": "1.61.0", "d3": "7.9.0", "@types/d3": "7.4.3",
 }
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
+# Paths the workspace dev server answers itself (talaria/apps.mjs), so no app can be named after one.
+RESERVED = {"apps", "shared", "talaria", "node_modules", "lib", "legacy", "assets"}
 # An older app's own code, which its rewrite replaces. Everything else in its folder (data, images, a routine's
 # scripts) stays where it is.
 CODE = {".html", ".htm", ".js", ".mjs", ".jsx", ".tsx", ".ts", ".css"}
@@ -93,7 +95,8 @@ def locked(ws: Path):
 
 def seed(ws: Path) -> None:
     """Set up the workspace: Hermes' own files (package.json, tsconfig.json, shared/) only when missing; the
-    plugin's talaria/ folder replaced every time, so a plugin update reaches it."""
+    plugin's talaria/ folder brought in step with the plugin's copy every time (only the files that changed), so a
+    plugin update reaches it."""
     for src in TEMPLATE.rglob("*"):
         rel = src.relative_to(TEMPLATE)
         if rel.parts[0] == "talaria" or src.is_dir():
@@ -104,8 +107,17 @@ def seed(ws: Path) -> None:
             shutil.copy2(src, dest)
     (ws / "apps").mkdir(exist_ok=True)
     teach_paths(ws)
-    shutil.rmtree(ws / "talaria", ignore_errors=True)
-    shutil.copytree(TEMPLATE / "talaria", ws / "talaria")
+    # Only what changed: the dev server watches talaria/, and rewriting every file reloaded every open app.
+    mine = {p.relative_to(TEMPLATE / "talaria") for p in (TEMPLATE / "talaria").rglob("*") if p.is_file()}
+    dest = ws / "talaria"
+    for rel in sorted(mine):
+        src, out = TEMPLATE / "talaria" / rel, dest / rel
+        if not out.is_file() or out.read_bytes() != src.read_bytes():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, out)
+    for old in sorted((p for p in dest.rglob("*") if p.is_file()), reverse=True) if dest.is_dir() else ():
+        if old.relative_to(dest) not in mine:
+            old.unlink()
 
 
 def teach_paths(ws: Path) -> None:
@@ -180,8 +192,9 @@ def swap(staged: Path, dest: Path, retire: set[str] = frozenset()) -> None:
 
 
 def build_one(name: str, ws: Path, env: dict[str, str]) -> Path:
-    if not (ws / "apps" / name / "index.html").is_file():
-        raise BuildError(f"No app source at {ws / 'apps' / name}/index.html (start one with --new {name}).")
+    src = ws / "apps" / name
+    if not any((src / f).is_file() for f in ("index.html", "App.tsx", "App.jsx")):
+        raise BuildError(f"No app source at {src}/ (an App.tsx; start one with --new {name}).")
     staged = ws / ".out" / name
     run(["node", str(ws / "node_modules" / "vite" / "bin" / "vite.js"), "build", "--config", "talaria/vite.config.mjs",
          "--logLevel", "warn"], ws, {**env, "TALARIA_APP": name, "TALARIA_OUT": str(staged)}, f"Building {name}")
@@ -195,7 +208,25 @@ def build_one(name: str, ws: Path, env: dict[str, str]) -> Path:
         retire = set()
     swap(staged, dest, retire)
     shutil.rmtree(staged, ignore_errors=True)
+    migrate_db(name)
     return dest
+
+
+def migrate_db(name: str) -> None:
+    """Apply the app's migrations/ to its app.db (db.py), so a routine finds its tables before the page first asks."""
+    if not (built(name) / "migrations").is_dir():
+        return
+    import importlib.util
+    db = sys.modules.get("talaria_db")
+    if db is None:
+        spec = importlib.util.spec_from_file_location("talaria_db", HERE / "db.py")
+        db = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(db)
+        db = sys.modules.setdefault("talaria_db", db)
+    try:
+        db.connect(built(name).parent, name).close()
+    except Exception as e:
+        raise BuildError(f"Built {name}, but its database: {e}") from None
 
 
 def older(name: str) -> bool:
@@ -204,6 +235,8 @@ def older(name: str) -> bool:
 
 
 def new_app(name: str, ws: Path, title: str | None = None) -> None:
+    if name in RESERVED:
+        raise BuildError(f"{name} is taken by the workspace itself; pick another name.")
     src = ws / "apps" / name
     if src.exists():
         raise BuildError(f"{src} already exists.")

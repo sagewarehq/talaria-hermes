@@ -6,10 +6,10 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { readdirSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { aliases, entryPlugin, isApp, page, workspace } from './apps.mjs'
 
-const workspace = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const root = path.join(workspace, 'apps', process.env.TALARIA_APP)
+const app = process.env.TALARIA_APP
+const root = path.join(workspace, 'apps', app)
 
 // Every page of the app is an entry, so pages stay pages: index.html, trip.html, cebu/index.html.
 function pages(dir) {
@@ -20,22 +20,28 @@ function pages(dir) {
   })
 }
 
+// An app that's only an App.tsx gets the dev server's page as its index.html, so the phone loads the same thing.
+const html = pages(root)
+const virtual = path.join(root, 'index.html')
+const generated = html.length === 0 && isApp(app)
+function virtualPage() {
+  return {
+    name: 'talaria-page',
+    resolveId: (id) => (generated && id === virtual ? virtual : undefined),
+    load: (id) => (generated && id === virtual ? page(app) : undefined),
+  }
+}
+
 export default defineConfig({
   root,
   base: '/', // each app is its own origin on the phone, in the preview and in Desktop
   publicDir: path.join(root, 'public'),
-  plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: [
-      { find: /^@shared\//, replacement: path.join(workspace, 'shared') + '/' },
-      { find: /^viz$/, replacement: path.join(workspace, 'talaria', 'viz', 'entry.ts') },
-      { find: /^talaria$/, replacement: path.join(workspace, 'talaria', 'sdk.ts') },
-    ],
-  },
+  plugins: [react(), tailwindcss(), entryPlugin(), virtualPage()],
+  resolve: { alias: aliases },
   build: {
     outDir: process.env.TALARIA_OUT,
     emptyOutDir: true, // outside root, so Vite only empties it when told
     target: 'safari17', // the phone's WKWebView
-    rollupOptions: { input: Object.fromEntries(pages(root).map((f) => [path.relative(root, f).replace(/\.html$/, ''), f])) },
+    rollupOptions: { input: generated ? { index: virtual } : Object.fromEntries(html.map((f) => [path.relative(root, f).replace(/\.html$/, ''), f])) },
   },
 })

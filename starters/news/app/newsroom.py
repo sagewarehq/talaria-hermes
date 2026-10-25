@@ -29,7 +29,27 @@ def settings() -> dict:
         s = json.loads(SETTINGS.read_text())
     except (OSError, ValueError):
         s = {}
-    return {"version": 1, "timezone": "UTC", "topics": [], "interests": "", "feeds": [], **s}
+    return {"version": 1, "timezone": "UTC", "topics": [], "interests": "", "feeds": [], "discovery": True, **s}
+
+
+COMICS = "Comics"
+MAX_DISCOVERY = 3
+
+
+def discovery_feeds(s: dict | None = None) -> list[tuple[str, str, str]]:
+    """(area, title, url) of each feed in discovery.json near the reader's topics, unless they turned discovery off:
+    the few stories each edition may carry from outside their topics, to widen their taste (EDITORIAL.md). Feeds the
+    reader already follows are theirs, not discovery."""
+    s = s or settings()
+    if not s.get("discovery", True):
+        return []
+    try:
+        areas = json.loads((ROOT / "discovery.json").read_text())["areas"]
+    except (OSError, ValueError, KeyError):
+        return []
+    mine = {f.get("url") for f in s["feeds"]}
+    return [(a["name"], f["title"], f["url"]) for a in areas if set(a.get("near", [])) & set(s["topics"])
+            for f in a["feeds"] if f["url"] not in mine]
 
 
 def save(s: dict) -> dict:
@@ -74,3 +94,40 @@ def fetch(url: str, timeout: float = 18, limit: int = 4_000_000) -> tuple[bytes,
     """(body, content type, final URL) of a public https URL, at most ``limit`` bytes."""
     with open_public(url, timeout) as r:
         return r.read(limit), r.headers.get_content_type(), r.geturl()
+
+
+REPEAT_HOURS = 72
+
+
+def story_url(url: str) -> str:
+    """A story's URL without what makes the same story look different: scheme, www, query, fragment, trailing slash."""
+    parts = urlsplit((url or "").strip())
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    return f"{host}{parts.path.rstrip('/')}" if host else ""
+
+
+def recently_published(root: Path = ROOT, hours: int = REPEAT_HOURS, now=None) -> dict[str, str]:
+    """Every story in an edition from the last `hours`: its id and its URL (story_url), each mapped to the newest
+    edition's editedAt it ran in. An edition carries what's new; these already ran."""
+    import datetime as dt
+    now = now or dt.datetime.now(dt.timezone.utc)
+    seen: dict[str, str] = {}
+    for path in [root / "editorial.json", *sorted((root / "editions").glob("*.json"))]:
+        try:
+            ed = json.loads(path.read_text())
+            when = dt.datetime.fromisoformat(ed["editedAt"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if when.tzinfo is None or now - when > dt.timedelta(hours=hours):
+            continue
+        urls = {a.get("id"): a.get("url", "") for a in ed.get("snapshots", [])}
+        for item in ed.get("items", []):
+            for key in (f"id:{item.get('id')}", f"url:{story_url(urls.get(item.get('id'), ''))}"):
+                if key not in ("id:None", "url:") and ed["editedAt"] > seen.get(key, ""):
+                    seen[key] = ed["editedAt"]
+    return seen
+
+
+def ran(article: dict, recent: dict[str, str]) -> str | None:
+    """When this story last ran in a recent edition, or None."""
+    return recent.get(f"id:{article.get('id')}") or recent.get(f"url:{story_url(article.get('url', ''))}") or None

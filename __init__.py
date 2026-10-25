@@ -23,7 +23,7 @@ from . import store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.4.0"
+VERSION = "0.7.0"
 
 
 def _safe(fn):
@@ -43,11 +43,47 @@ def on_session_start(session_id: str = "", platform: str = "", **_: Any) -> None
 
 
 @_safe
-def pre_llm_call(session_id: str = "", turn_id: str = "", platform: str = "", **_: Any) -> None:
-    # Once per turn, before the model runs. on_session_start only fires on a session's first turn,
-    # so without this a reply to a "needs you" turn left that row up and its end went unclassified.
-    # Returns None: no context injected into the turn.
+def _turn_starts(session_id: str, turn_id: str, platform: str) -> None:
+    # on_session_start only fires on a session's first turn, so without this a reply to a "needs you"
+    # turn left that row up and its end went unclassified.
     store.set_state(session_id, "running", turn_id=turn_id or None, platform=platform, new_turn=True)
+
+
+def pre_llm_call(session_id: str = "", turn_id: str = "", platform: str = "", **_: Any) -> dict | None:
+    """Once per turn, before the model runs. In a Desktop chat while you share an app page with Hermes (the eye
+    beside an app, or Chat about this page), what it shows rides along with your message: Hermes then answers
+    about the page without having to think of app_snapshot. Nothing otherwise, and never on other platforms."""
+    _turn_starts(session_id, turn_id, platform)
+    if platform != "desktop":
+        return None
+    try:
+        context = shared_page_context()
+    except Exception:
+        logger.debug("talaria: reading the shared page failed", exc_info=True)
+        return None
+    return {"context": context} if context else None
+
+
+PAGE_CONTEXT_TEXT = 6_000
+
+
+def shared_page_context() -> str | None:
+    """The shared app page as a note for the turn: which app and page, and the text in view. Quick: a page that
+    doesn't answer in a couple of seconds is left out rather than holding up the reply."""
+    from . import appserver
+    shot = appserver.snapshot(wait=2)
+    if not shot or shot.get("error"):
+        return None
+    where = " · ".join(x for x in (shot.get("title") or shot.get("app"), shot.get("page")) if x)
+    lines = [f"[Talaria: the user has the app \"{shot.get('app')}\" open beside this chat and shared with you"
+             f" ({where}). \"This\", \"here\" or \"on screen\" most likely mean it. What it shows now:]"]
+    if shot.get("selection"):
+        lines.append(f"Selected: {shot['selection'][:1500]}")
+    seen = (shot.get("visible") or shot.get("text") or "")[:PAGE_CONTEXT_TEXT]
+    lines.append(seen or "(no readable text)")
+    if shot.get("scroll") is not None:
+        lines.append(f"[Scrolled {shot['scroll']}% down. app_snapshot reads the whole page, fresh.]")
+    return "\n".join(lines)
 
 
 @_safe
@@ -177,18 +213,29 @@ def on_human_input_resolved(session_id: str = "", **_: Any) -> None:
         store.set_state(session_id, "running")
 
 
-USAGE = ("usage: /talaria version | whoami | inbox [--json] | apps | open <app> | action <app> <name> [base64 json]"
-         " | dismiss <session_id> | classify <session_id>")
+USAGE = ("usage: /talaria version | whoami | inbox [--json] | apps | open <app> [--via <host>] | action <app> <name> [base64 json]"
+         " | db-check"
+         " | dismiss <session_id> [turn_id] | classify <session_id>")
 
 
 def list_apps() -> list[dict[str, Any]]:
-    """Every app in ``talaria/apps/``, newest first: its folder name, its index page's ``<title>``, when it last
-    changed. For the Desktop plugin, which can't list folders on the box itself."""
+    """Every app, newest first: its folder name, its title, when it last changed. For the Desktop plugin, which can't
+    list folders on the box itself. The workspace's apps that are only an App.tsx (the dev server runs them, built or
+    not), then the built ones in ``talaria/apps/`` with an index page."""
+    from . import appserver
     root = store.home() / "talaria" / "apps"
-    apps = []
+    apps, seen = [], set()
+    source = store.home() / "talaria" / "workspace" / "apps"
+    for d in source.iterdir() if source.is_dir() else ():
+        if not appserver.runs(d.name):
+            continue
+        files = [f for f in d.rglob("*") if f.is_file()] + [f for f in (root / d.name).rglob("*") if f.is_file()]
+        updated = max((f.stat().st_mtime for f in files), default=d.stat().st_mtime)
+        apps.append({"name": d.name, "title": appserver.title(d.name), "folder": str(root / d.name), "updated": updated})
+        seen.add(d.name)
     for d in root.iterdir() if root.is_dir() else ():
         index = d / "index.html"
-        if not index.is_file():
+        if d.name in seen or not index.is_file():
             continue
         title = None
         try:
@@ -220,10 +267,17 @@ def handle_command(raw_args: str = "") -> str:
         return "\n".join(f"{r['state']:<9} {r.get('title') or r['session_id']}  {r.get('reason') or ''}".rstrip() for r in rows)
     if sub == "apps":
         return store.to_json({"apps": list_apps()})
-    if sub == "open" and len(args) == 2:  # Hermes Desktop forwards this port over its SSH connection
-        from . import preview
+    if sub == "open" and len(args) in (2, 4) and (len(args) == 2 or args[2] == "--via"):
+        # Desktop forwards the port over its SSH connection; on a direct one it passes --via <the gateway's host>,
+        # and gets the gate there and a ticket for this device (appserver.gate).
+        from . import appserver, preview
+        if appserver.runs(args[1]):  # the workspace dev server: every app on one port, at /<app>/
+            ready = {**appserver.ensure(), "path": f"/{args[1]}/"}
+            if len(args) == 4 and ready["state"] == "ready":
+                return store.to_json({**ready, **appserver.gate(args[3]), "host": args[3]})
+            return store.to_json(ready)
         try:
-            return store.to_json({"port": preview.serve_app(args[1])})
+            return store.to_json({"state": "ready", "port": preview.serve_app(args[1]), "path": "/"})
         except (LookupError, OSError) as e:
             return store.to_json({"error": str(e)})
     if sub == "action" and len(args) in (3, 4):  # an app's page running one of its declared scripts
@@ -234,8 +288,11 @@ def handle_command(raw_args: str = "") -> str:
         except ValueError:
             return actions.failed("The request isn't base64.")
         return actions.run(store.home() / "talaria" / "apps", args[1], args[2], request)
-    if sub == "dismiss" and len(args) == 2:
-        return store.to_json({"dismissed": store.dismiss(args[1])})
+    if sub == "db-check":  # is SQLite here for apps' databases, and how to add what's missing (db.py --check)
+        from . import actions
+        return store.to_json(actions.db_module().check())
+    if sub == "dismiss" and len(args) in (2, 3):
+        return store.to_json({"dismissed": store.dismiss(args[1], args[2] if len(args) == 3 else None)})
     if sub == "classify" and len(args) == 2:  # debugging: run the needs-you check on a session now
         try:
             return store.to_json({"verdict": classify(store.last_assistant_text(args[1]))})
@@ -279,6 +336,29 @@ def move_canvases() -> None:
         pass
 
 
+APP_SNAPSHOT = {
+    "name": "app_snapshot",
+    "description": (
+        "Read the Talaria app page the user has open and shared with you (Hermes Desktop's eye toggle beside an app): "
+        "which app and page, its title, `visible` (the text in view right now), `text` (all of the page's readable "
+        "text), `selection` if any, and `scroll` (percent down). Use it when the user refers to what they're looking "
+        "at ('this', 'here', 'on screen'). It's read fresh on each call. The app's code and data are in its workspace "
+        "and data folders as usual; this is only what the page shows."),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "app": {"type": "string", "description": "Only this app's page (its folder name). Omit for the newest shared page."},
+        },
+    },
+}
+
+
+def app_snapshot(args: dict | None = None, **_: Any) -> str:
+    from . import appserver
+    app = str((args or {}).get("app") or "").strip()
+    return store.to_json(appserver.snapshot(app or None))
+
+
 def register(ctx) -> None:
     for name, fn in (("on_session_start", on_session_start), ("pre_llm_call", pre_llm_call),
                      ("on_session_end", on_session_end),
@@ -297,6 +377,9 @@ def register(ctx) -> None:
                        description="Build or change a Talaria app: a small web app the user opens full screen in Talaria.")
     ctx.register_skill("routine", skills / "routine" / "SKILL.md",
                        description="Set up a routine: a cron job that reads well in Talaria's Routines list.")
+    if hasattr(ctx, "register_tool"):  # what the shared app page shows (older Hermes: no plugin tools)
+        ctx.register_tool(name="app_snapshot", toolset="talaria", schema=APP_SNAPSHOT, handler=app_snapshot,
+                          description=APP_SNAPSHOT["description"], emoji="👁")
     ctx.register_command("talaria", handler=handle_command,
                          description="Talaria attention feed: running / waiting sessions across backends.",
-                         args_hint="version | whoami | inbox [--json] | apps | open <app> | action <app> <name> | dismiss <id>")
+                         args_hint="version | whoami | inbox [--json] | apps | open <app> | action <app> <name> | dismiss <id> [turn]")

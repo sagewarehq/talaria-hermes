@@ -1,0 +1,71 @@
+{
+  "areas": [
+    {
+      "name": "Science & Research",
+      "near": ["Artificial Intelligence", "Technology", "Developer & Engineering"],
+      "feeds": [
+        {"url": "https://api.quantamagazine.org/feed/", "title": "Quanta Magazine"},
+        {"url": "https://spectrum.ieee.org/feeds/feed.rss", "title": "IEEE Spectrum"}
+      ]
+    },
+    {
+      "name": "Space",
+      "near": ["Technology"],
+      "feeds": [
+        {"url": "https://www.nasa.gov/feed/", "title": "NASA"}
+      ]
+    },
+    {
+      "name": "Privacy & Policy",
+      "near": ["Cybersecurity", "Artificial Intelligence", "Technology"],
+      "feeds": [
+        {"url": "https://www.eff.org/rss/updates.xml", "title": "EFF"},
+        {"url": "https://www.404media.co/rss/", "title": "404 Media"}
+      ]
+    },
+    {
+      "name": "Tech Strategy",
+      "near": ["Startups", "Fintech", "Technology", "Artificial Intelligence"],
+      "feeds": [
+        {"url": "https://stratechery.com/feed/", "title": "Stratechery"},
+        {"url": "https://www.platformer.news/rss/", "title": "Platformer"}
+      ]
+    },
+    {
+      "name": "Economics",
+      "near": ["Fintech", "Startups"],
+      "feeds": [
+        {"url": "https://www.noahpinion.blog/feed", "title": "Noahpinion"}
+      ]
+    },
+    {
+      "name": "Climate Tech",
+      "near": ["Startups", "Technology"],
+      "feeds": [
+        {"url": "https://www.canarymedia.com/rss.rss", "title": "Canary Media"}
+      ]
+    },
+    {
+      "name": "Tech Around the World",
+      "near": ["Technology", "Startups", "Fintech"],
+      "feeds": [
+        {"url": "https://restofworld.org/feed/latest", "title": "Rest of World"}
+      ]
+    },
+    {
+      "name": "Design & Front End",
+      "near": ["Developer & Engineering"],
+      "feeds": [
+        {"url": "https://www.smashingmagazine.com/feed/", "title": "Smashing Magazine"}
+      ]
+    },
+    {
+      "name": "Comics",
+      "near": ["Artificial Intelligence", "Technology", "Cybersecurity", "Developer & Engineering", "Fintech", "Startups"],
+      "feeds": [
+        {"url": "https://xkcd.com/atom.xml", "title": "xkcd"},
+        {"url": "https://www.smbc-comics.com/comic/rss", "title": "SMBC"}
+      ]
+    }
+  ]
+}

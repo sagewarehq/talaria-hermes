@@ -1,5 +1,7 @@
 import { Screen } from '@shared/Screen'
 
+export const meta = { title: '__TITLE__' }
+
 export default function App() {
   return (
     <Screen>
