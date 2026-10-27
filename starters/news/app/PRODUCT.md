@@ -16,8 +16,10 @@ extraction (`extract.py`, in `~/.hermes/talaria/venvs/newsroom` when present) an
 `editorial.json` (latest), `editions/<id>.json` (immutable archive), `editions.json` (index), `articles/<id>.json`
 (extracted text).
 ## Shared by the reader's devices
-The reading list and every device's votes live in `app.db` (`migrations/001-reader.sql`, `reader.py`), changed by
-`actions/saved.py` and `actions/feedback.py` in one transaction each, so two devices at once never lose a change.
-Each transaction rewrites the files the page and the editor read: `read-later.json` (Read later: story snapshots and
-when they were saved, removals remembered) and `reader-feedback.json` (each device's votes, a 👎's reason and note,
-and one vote per story). The phone and Hermes Desktop read both, so Read later and Liked are the same everywhere. The routine is "Newsroom editor", installed from the app's first run.
+The reading list, every device's votes and the stories read live in `app.db` (`migrations/`, `reader.py`), changed
+by `actions/saved.py`, `actions/feedback.py` and `actions/read.py` in one transaction each, so two devices at once
+never lose a change. Each transaction rewrites the files the page and the editor read: `read-later.json` (Read later:
+story snapshots and when they were saved, removals remembered), `reader-feedback.json` (each device's votes, a 👎's
+reason and note, a vote taken back as 0; and one vote per story for the editor) and `read.json`. Every device adopts
+all three, the latest vote on a story winning, so a 👎 hides a story, a 👍 ranks it up and a story shows Read
+everywhere. The routine is "Newsroom editor", installed from the app's first run.

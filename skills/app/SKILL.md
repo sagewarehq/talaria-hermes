@@ -35,7 +35,7 @@ into a folder of its own that Talaria loads:
 
 ## Build it
 
-    python3 ~/.hermes/plugins/talaria/build.py --new <name>    start an app from the template, and build it
+    python3 ~/.hermes/plugins/talaria/build.py --new <name> <icon>  start an app from the template, and build it
     python3 ~/.hermes/plugins/talaria/build.py <name>          build it after every change to its source
     python3 ~/.hermes/plugins/talaria/build.py --all           build every app, after a change to shared/
     python3 ~/.hermes/plugins/talaria/build.py add <pkg>…      add npm packages to the workspace
@@ -81,13 +81,19 @@ Add to it whatever a second app would otherwise copy: a theme, a card, a data ho
 `main.tsx`: Talaria gives every app its page, loads `style.css`, and mounts `App.tsx`'s default export.
 
 ```tsx
-export const meta = { title: 'Spending', icon: './icon.svg', theme: { light: '#ffffff', dark: '#111317' } }
+export const meta = { title: 'Spending', glyph: 'dashboard', icon: './icon.svg', theme: { light: '#ffffff', dark: '#111317' } }
 
 export default function App() { … }
 ```
 
-`meta.title` is the app's name in Talaria; keep it short. `icon` is an image in the app's data folder, and `theme`
-the browser chrome's colour; both are optional.
+`meta.title` is the app's name in Talaria; keep it short. `glyph` is its icon in Talaria's lists and sidebars, one
+of: folder-library, repo, rocket, beaker, flame, star-full, heart, zap, target, lightbulb, tools, device-desktop,
+device-mobile, terminal, dashboard, globe, broadcast, cloud, database, package, book, organization, bug, shield, key,
+gift, telescope, home. Every app has one: `--new <name> <icon>` won't start an app without it, so pick the one that
+fits best (a tracker of money or metrics: `dashboard`; people: `organization`; reading: `book`; news: `broadcast`).
+A migrated app, or one from before icons, gets one added to its `meta` the next time you touch it. The user can
+pick another in Talaria, which wins over `glyph`. `icon` is an image in the app's data folder (the page's favicon),
+and `theme` the browser chrome's colour; both are optional.
 
 ## Pages and state
 
@@ -178,7 +184,10 @@ async function add(name: string) {
 ```
 
 `useQuery` reads on mount and again when its SQL or params change, or on `refresh()`; it keeps the last rows while
-the next ones load. The rest of `db`:
+the next ones load. On the iPhone, reads (and the first fetch of each data file on a page load) answer at once from the
+last answers it kept and are checked against the box behind them: `useQuery` and `useJSON` re-read by themselves when
+they changed. A page that reads with plain `db.query` or `fetch` on open is reloaded instead, unless it re-reads in
+`onDataChange(() => load())` (from 'talaria'). The rest of `db`:
 
 ```tsx
 const trip = await db.get<Trip>('SELECT * FROM trips WHERE id = ?', [id])

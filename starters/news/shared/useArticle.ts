@@ -1,10 +1,11 @@
 // An article's extracted text (articles/<id>.json, written on the box when the edition is published), for the in-app
-// reader. Blocks are plain text; nothing is rendered as HTML. Media blocks are addresses: a photo on the publisher's
+// reader. Blocks are plain text; nothing is rendered as HTML. A block with inline code has it in `parts`: text, code,
+// text, and so on. Media blocks are addresses: a photo on the publisher's
 // site, or an embed from a known player (YouTube, Vimeo, Flourish, Datawrapper), rebuilt from its id by extract.py.
 import { useEffect, useState } from 'react'
 
 export type Block =
-  | { t: 'p' | 'h' | 'li' | 'q'; text: string }
+  | { t: 'p' | 'h' | 'li' | 'q' | 'code'; text: string; parts?: string[] }
   | { t: 'img'; src: string; alt?: string }
   | { t: 'embed'; kind: 'video' | 'chart'; src: string; ratio?: number }
 export type Extracted = { ok: boolean; words?: number; byline?: string | null; site?: string | null; blocks?: Block[]; reason?: string }

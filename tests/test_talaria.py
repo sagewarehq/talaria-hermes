@@ -4,6 +4,7 @@
 import importlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -215,6 +216,47 @@ def test_lists_apps_newest_first(talaria):
     (root / "half-built").mkdir()  # no index page: not an app yet
     apps = json.loads(talaria.handle_command("apps"))["apps"]
     assert [(a["name"], a["title"], a["updated"]) for a in apps] == [("budget", None, 200), ("trips", "Trip planner", 100)]
+
+
+def test_an_apps_stamp_changes_with_its_code_but_not_its_data(talaria):
+    app = talaria.store.home() / "talaria" / "apps" / "trips"
+    app.mkdir(parents=True)
+    (app / "index.html").write_text("<title>Trips</title>")
+    stamp = lambda: json.loads(talaria.handle_command("apps"))["apps"][0]["stamp"]
+    first = stamp()
+    for name in ("app.db", "app.db-wal", "app.db-shm", "data.json"):
+        (app / name).write_bytes(b"rows")
+    assert stamp() == first
+    (app / "app.jsx").write_text("export default () => null")
+    assert stamp() != first
+
+
+def test_app_icons_and_pins_are_kept_for_every_device(talaria, monkeypatch):
+    """An app's icon is the one picked, else its own meta.glyph if that's in the kit; pins keep their order."""
+    from talaria_plugin import appserver
+    root = talaria.store.home() / "talaria" / "apps"
+    for name in ("trips", "budget"):
+        (root / name).mkdir(parents=True)
+        (root / name / "index.html").write_text("<title>x</title>")
+    ws = talaria.store.home() / "talaria" / "workspace" / "apps" / "notes"
+    ws.mkdir(parents=True)
+    (ws / "App.tsx").write_text("export const meta = { title: 'Notes', glyph: 'book' }\nexport default () => null")
+    monkeypatch.setattr(appserver, "runs", lambda name: name == "notes")
+    apps = lambda: {a["name"]: (a["icon"], a["pinned"]) for a in json.loads(talaria.handle_command("apps"))["apps"]}
+    assert apps() == {"trips": (None, None), "budget": (None, None), "notes": ("book", None)}
+
+    assert json.loads(talaria.handle_command("app-icon trips rocket")) == {"name": "trips", "icon": "rocket"}
+    assert "error" in json.loads(talaria.handle_command("app-icon trips wallet"))  # not in the kit
+    assert "error" in json.loads(talaria.handle_command("app-icon ../x rocket"))
+    talaria.handle_command("app-icon notes heart")
+    assert json.loads(talaria.handle_command("pin budget")) == {"pinned": ["budget"]}
+    assert json.loads(talaria.handle_command("pin trips")) == {"pinned": ["budget", "trips"]}
+    assert apps() == {"trips": ("rocket", 1), "budget": (None, 0), "notes": ("heart", None)}
+
+    talaria.handle_command("app-icon notes none")  # back to its own
+    assert json.loads(talaria.handle_command("unpin budget")) == {"pinned": ["trips"]}
+    assert apps() == {"trips": ("rocket", 0), "budget": (None, None), "notes": ("book", None)}
+    assert "rocket" in json.loads(talaria.handle_command("apps"))["icons"]
 
 
 def test_open_serves_an_app_on_its_own_port(talaria):
@@ -576,7 +618,8 @@ def test_builds_a_new_app_end_to_end(tmp_path, monkeypatch):
     """The template app through a real npm install and vite build: pages, Tailwind classes from shared/, and data
     that survives a rebuild."""
     build = load_build(tmp_path, monkeypatch)
-    assert build.main(["--new", "demo"]) == 0
+    assert build.main(["--new", "demo", "rocket"]) == 0
+    assert "glyph: 'rocket'" in (build.workspace() / "apps" / "demo" / "App.tsx").read_text()
     dest = build.built("demo")
     html = (dest / "index.html").read_text()
     assert "<title>Demo</title>" in html and 'src="/assets/' in html
@@ -585,6 +628,20 @@ def test_builds_a_new_app_end_to_end(tmp_path, monkeypatch):
     (dest / "data.json").write_text("[]")
     assert build.main(["demo"]) == 0
     assert (dest / "data.json").read_text() == "[]"
+
+
+def test_a_new_app_starts_with_its_icon(tmp_path, monkeypatch, capsys):
+    """--new needs an icon from the kit, and writes it into the app's meta."""
+    build = load_build(tmp_path, monkeypatch)
+    monkeypatch.setattr(build, "node_env", lambda: {})
+    monkeypatch.setattr(build, "install", lambda ws, env: None)
+    monkeypatch.setattr(build, "build_one", lambda name, ws, env: build.built(name))
+    assert build.main(["--new", "trips"]) == 1
+    assert "Pick its icon" in capsys.readouterr().err
+    assert build.main(["--new", "trips", "wallet"]) == 1  # not in the kit
+    assert not (build.workspace() / "apps" / "trips").exists()
+    assert build.main(["--new", "trips", "globe"]) == 0
+    assert "export const meta = { title: 'Trips', glyph: 'globe' }" in (build.workspace() / "apps" / "trips" / "App.tsx").read_text()
 
 
 def test_migrate_an_older_app(tmp_path, monkeypatch):
@@ -597,7 +654,7 @@ def test_migrate_an_older_app(tmp_path, monkeypatch):
     for rel, text in (("index.html", "<title> Spending\n</title>"), ("app.js", "old"), ("style.css", "old"),
                       ("data.json", "live"), ("refresh.py", "routine"), ("images/a.jpg", "img")):
         (old / rel).write_text(text)
-    assert build.main(["--new", "spending"]) == 1  # would replace the live app
+    assert build.main(["--new", "spending", "dashboard"]) == 1  # would replace the live app
     assert build.main(["migrate", "spending"]) == 0
     ws = build.workspace()
     assert "title: 'Spending'" in (ws / "apps" / "spending" / "App.tsx").read_text()
@@ -757,6 +814,22 @@ def test_newsroom_settings_sources_and_feedback(tmp_path):
     merged = {v["id"]: v for v in json.loads((app / "reader-feedback.json").read_text())["votes"]}
     assert merged["p"]["value"] == 1 and merged["q"] == {"id": "q", "value": -1, "at": later, "reason": "seen"}
     assert {"c", "d"} <= set(merged)  # the earlier, device-less sync is kept too
+    # A vote taken back on another device (0, later) wins and leaves the editor's votes; the page still gets it.
+    act(app, "feedback", {"device": "desktop-0001", "votes": [{"id": "p", "value": 0, "at": later}]})
+    data = json.loads((app / "reader-feedback.json").read_text())
+    assert "p" not in {v["id"] for v in data["votes"]} and {"id": "p", "value": 0, "at": later} in data["devices"]["desktop-0001"]["votes"]
+    # A device with no votes (a new Desktop origin) isn't recorded, so it never pushes out one that has them.
+    for i in range(25):
+        act(app, "feedback", {"device": f"empty-{i:04}", "votes": []})
+    assert set(json.loads((app / "reader-feedback.json").read_text())["devices"]) == {"unknown", "phone-0001", "desktop-0001"}
+
+
+def test_newsroom_read_marks_are_shared(tmp_path):
+    """actions/read.py: a story opened on one device shows Read on the others, keeping when it was first read."""
+    app = newsroom_app(tmp_path)
+    assert act(app, "read", {"ids": ["a1", "../x", 5], "at": "2026-10-24T01:00:00Z"}) == (0, {"count": 1})
+    assert act(app, "read", {"ids": ["a1", "b2"], "at": "2026-10-25T01:00:00Z"}) == (0, {"count": 2})
+    assert json.loads((app / "read.json").read_text())["read"] == {"a1": "2026-10-24T01:00:00Z", "b2": "2026-10-25T01:00:00Z"}
 
 
 def test_newsroom_read_later_is_shared_by_devices(tmp_path):
@@ -942,6 +1015,79 @@ def test_starters_install_once_and_leave_existing_apps(tmp_path, monkeypatch):
     assert (ws / "apps" / "news" / "App.tsx").read_text() == "mine"
 
 
+def test_marketplace_install_brings_back_a_deleted_starter_and_retries_a_failed_one(tmp_path, monkeypatch):
+    """build.py --starter: the Apps marketplace's install. Unlike first run, it installs a starter recorded before
+    (deleted since, or failed), picks up a failed try's own copy, and never replaces an app of the user's."""
+    build = load_build(tmp_path, monkeypatch)
+    ws = build.workspace()
+    build.seed(ws)
+    monkeypatch.setattr(build, "install", lambda ws, env: None)
+    monkeypatch.setattr(build.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(build.subprocess.SubprocessError("no venv here")))
+
+    def fail(name, ws, env):
+        raise build.BuildError("vite: out of memory")
+    monkeypatch.setattr(build, "build_one", fail)
+    assert build.install_chosen("news", ws, {}) == "failed: vite: out of memory"
+    assert build.starter_outcome("news").startswith("failed") and (ws / "apps" / "news").is_dir()
+
+    def ok(name, ws, env):
+        (build.built(name) / "index.html").write_text("<title>Newsroom</title>")
+    monkeypatch.setattr(build, "build_one", ok)
+    assert build.install_chosen("news", ws, {}) == "installed"  # its own leftover copy didn't stand in the way
+    # deleted since: the marketplace brings it back, where first run would leave it gone
+    shutil.rmtree(ws / "apps" / "news")
+    shutil.rmtree(build.built("news"))
+    assert build.install_starters(ws, {}) == {"news": "installed"} and not (ws / "apps" / "news").exists()
+    assert build.install_chosen("news", ws, {}) == "installed" and (build.built("news") / "index.html").is_file()
+    assert build.install_chosen("news", ws, {}) == "installed"  # one that waited on first run's: still installed
+    # a failed try the user has since made their own is theirs: never replaced
+    build.record("news", "failed: earlier")
+    shutil.rmtree(build.built("news"))
+    (ws / "apps" / "news" / "App.tsx").write_text("mine")
+    assert build.install_chosen("news", ws, {}).startswith("skipped")
+    assert (ws / "apps" / "news" / "App.tsx").read_text() == "mine"
+    assert build.install_chosen("nope", ws, {}).startswith("failed: Talaria doesn't ship")
+
+
+def test_catalog_lists_the_starters_with_their_state(talaria, tmp_path, monkeypatch):
+    """/talaria catalog and install: what the iPhone's Marketplace tab shows, and its Install."""
+    from talaria_plugin import market
+    home = tmp_path / "talaria"
+    started = []
+
+    class Proc:
+        pid = os.getpid()  # alive, as a running install would be
+        def wait(self):
+            return 0
+    monkeypatch.setattr(market.subprocess, "Popen", lambda cmd, **k: started.append(cmd) or Proc())
+    monkeypatch.setattr(market, "has_node", lambda: True)
+
+    def news():
+        out = json.loads(talaria.handle_command("catalog"))
+        return next(a for a in out["apps"] if a["name"] == "news")
+    row = news()
+    assert row["state"] == "available" and row["title"] == "Newsroom" and row["glyph"] == "broadcast" and row["description"]
+    assert json.loads(talaria.handle_command("install news")) == {"name": "news", "state": "installing"}
+    assert started[0][-2:] == ["--starter", "news"] and news()["state"] == "installing"
+    assert json.loads(talaria.handle_command("install news"))["state"] == "installing"  # not started twice
+    assert len(started) == 1
+    # an install that died without clearing its file doesn't show as running forever
+    (home / "installing" / "news.json").write_text(json.dumps({"pid": 2 ** 22 + 12345, "started": time.time()}))
+    (home / "starters.json").write_text(json.dumps({"news": "failed: npm install: network down"}))
+    row = news()
+    assert row["state"] == "failed" and row["error"] == "npm install: network down"
+    assert not (home / "installing" / "news.json").exists()
+    # installed by Talaria, or an app of the user's own with the name
+    (home / "apps" / "news").mkdir(parents=True)
+    (home / "apps" / "news" / "index.html").write_text("<title>Newsroom</title>")
+    (home / "starters.json").write_text(json.dumps({"news": "installed"}))
+    assert news()["state"] == "installed"
+    (home / "starters.json").write_text(json.dumps({"news": "skipped: already there"}))
+    assert news()["state"] == "taken" and "already have" in json.loads(talaria.handle_command("install news"))["error"]
+    assert "doesn't ship" in json.loads(talaria.handle_command("install nope"))["error"]
+    assert json.loads(talaria.handle_command("version"))["api"] == 2
+
+
 def test_app_db_migrates_and_answers_the_page(talaria, tmp_path):
     """db.py: an app's migrations applied once, in order; the page's statements (the reserved action talaria-db, as
     the phone sends it) kept inside its own database; a failed batch changes nothing."""
@@ -1031,3 +1177,40 @@ def test_a_shared_app_page_rides_along_in_desktop_turns_only(talaria, monkeypatc
     assert inbox(talaria)[0]["state"] == "running"  # the turn is still recorded
     monkeypatch.setattr(appserver, "snapshot", lambda app=None, wait=8: {"error": "The page didn’t answer."})
     assert talaria.pre_llm_call(session_id="d1", turn_id="t3", platform="desktop") is None
+
+
+def test_a_page_the_phone_hands_over_goes_with_that_sessions_next_turn(talaria, monkeypatch):
+    """/talaria page keeps what the phone's page shows for one session; its next turn carries it (ahead of a page
+    shared from Desktop), once; another session's turn doesn't; a stale or malformed one is dropped."""
+    import base64
+    from talaria_plugin import appserver
+    monkeypatch.setattr(appserver, "snapshot", lambda app=None, wait=8: {"app": "kanban", "visible": "Desktop's board"})
+    shot = {"app": "news", "title": "Newsroom", "page": "", "visible": "Woman, 65, becomes second patient"}
+    b64 = base64.b64encode(json.dumps(shot).encode()).decode()
+    assert json.loads(talaria.handle_command(f"page 20261025_1 {b64}")) == {"ok": True}
+    assert "Desktop's board" in talaria.pre_llm_call(session_id="other", turn_id="t", platform="desktop")["context"]
+    context = talaria.pre_llm_call(session_id="20261025_1", turn_id="t1", platform="desktop")["context"]
+    assert '"news"' in context and "second patient" in context and "Desktop's board" not in context
+    assert "talaria:app" not in context  # no such app on this box: nothing to point at
+    (talaria.store.home() / "talaria" / "workspace" / "apps" / "news").mkdir(parents=True)
+    talaria.keep_page("20261025_1", {**shot, "from": "phone", "scroll": 10})
+    context = talaria.pre_llm_call(session_id="20261025_1", turn_id="t1", platform="desktop")["context"]
+    assert "workspace/apps/news" in context and "talaria:app skill" in context and "app_snapshot" not in context
+    assert "Desktop's board" in talaria.pre_llm_call(session_id="20261025_1", turn_id="t2", platform="desktop")["context"]
+    talaria.keep_page("20261025_1", {**shot})
+    talaria._page_file("20261025_1").write_text(json.dumps({**shot, "at": 0}))  # handed over long ago
+    assert talaria.take_page("20261025_1") is None
+    assert json.loads(talaria.handle_command("page ../x " + b64)) == {"ok": False}
+    assert json.loads(talaria.handle_command("page s1 not-base64!"))["ok"] is False
+
+
+def test_voice_chat_asks_for_a_spoken_answer(talaria):
+    # Nothing extra until the phone says it's in voice chat on this session; then every turn until it's off.
+    assert talaria.pre_llm_call(session_id="v1", turn_id="t1", platform="tui") is None
+    assert json.loads(talaria.handle_command("voice v1 on"))["ok"] is True
+    context = talaria.pre_llm_call(session_id="v1", turn_id="t2", platform="tui")["context"]
+    assert "Speak first" in context and "word for word" in context
+    assert talaria.pre_llm_call(session_id="other", turn_id="t1", platform="tui") is None
+    talaria.handle_command("voice v1 off")
+    assert talaria.pre_llm_call(session_id="v1", turn_id="t3", platform="tui") is None
+    assert json.loads(talaria.handle_command("voice ../x on"))["ok"] is False

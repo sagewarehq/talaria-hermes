@@ -11,8 +11,9 @@ export const REASONS = {
 } as const
 export type Reason = keyof typeof REASONS
 
+/** A value of 0 is a vote taken back: kept, with when, so it wins over the older vote other devices still have. */
 export type Vote = {
-  id: string; title: string; url: string; publisher: string; topics: string[]; tags: string[]; value: 1 | -1; at: string
+  id: string; title: string; url: string; publisher: string; topics: string[]; tags: string[]; value: 1 | -1 | 0; at: string
   reason?: Reason; note?: string
 }
 export type Votes = Record<string, Vote>
@@ -30,7 +31,7 @@ export function sanitizeVotes(input: unknown): Votes {
   const out: Votes = {}
   if (!input || typeof input !== 'object' || Array.isArray(input)) return out
   for (const [id, v] of Object.entries(input as Record<string, any>).slice(-2000)) {
-    if (!v || ![-1, 1].includes(v.value) || !Number.isFinite(Date.parse(v.at))) continue
+    if (!v || ![-1, 1, 0].includes(v.value) || !Number.isFinite(Date.parse(v.at))) continue
     out[id] = { ...v, id, topics: strings(v.topics), tags: strings(v.tags),
                 reason: v.reason in REASONS ? v.reason : undefined, note: typeof v.note === 'string' ? v.note.slice(0, 500) : undefined }
   }

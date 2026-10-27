@@ -20,6 +20,20 @@ function useLink() {
   return (a: Article) => ({ href: a.url, onClick: (e: React.MouseEvent) => { e.preventDefault(); open(a.id) } })
 }
 
+/** A tap anywhere on a story's card opens it too, except on its own buttons and links, and in its "Why this story?"
+ *  (the card's title link is still what a keyboard and VoiceOver use). */
+function useCard() {
+  const { open } = useReader()
+  return (a: Article) => ({
+    onClick: (e: React.MouseEvent) => {
+      if (e.defaultPrevented || (e.target as Element).closest('a, button, input, [data-foot]')) return
+      if (getSelection()?.toString()) return  // selecting text, not opening
+      open(a.id)
+    },
+    className: 'cursor-pointer',
+  })
+}
+
 const spring = { type: 'spring', bounce: 0.18, duration: 0.5 } as const
 
 function useMedia(query: string) {
@@ -38,7 +52,7 @@ export const useWide = () => useMedia('(min-width: 760px)')
 /** Room for the edition picker and search in a rail beside the stories; narrower, they sit side by side above. */
 const useRail = () => useMedia('(min-width: 1120px)')
 
-export const meta = { title: 'Newsroom', icon: './favicon.svg', theme: { light: '#f6f8fc', dark: '#111317' } }
+export const meta = { title: 'Newsroom', glyph: 'broadcast', icon: './favicon.svg', theme: { light: '#f6f8fc', dark: '#111317' } }
 
 export default function App() {
   return <MotionConfig reducedMotion="user"><Newsroom /></MotionConfig>
@@ -143,10 +157,11 @@ function device() {
 /** Send this device's votes to the editor (reader-feedback.json) a moment after they change, a 👎's reason and
  *  note included. Quietly does nothing where actions can't run: the votes still rank this device's edition. */
 function useVoteSync(nr: Newsroom) {
-  const key = JSON.stringify(Object.keys(nr.vote).sort().map((k) => [k, nr.vote[k].value, nr.vote[k].reason, nr.vote[k].note]))
+  const own = nr.votesToSync
+  const key = JSON.stringify(Object.keys(own).sort().map((k) => [k, own[k].value, own[k].at, own[k].reason, own[k].note]))
   useEffect(() => {
     if (nr.phase !== 'ready') return
-    const t = setTimeout(() => action('feedback', { device: device(), votes: Object.values(nr.vote) }).catch(() => {}), 2500)
+    const t = setTimeout(() => action('feedback', { device: device(), votes: Object.values(own) }).catch(() => {}), 2500)
     return () => clearTimeout(t)
   }, [key, nr.phase])
 }
@@ -402,19 +417,20 @@ function Topic({ a, keyStory, className = '' }: { a: Article; keyStory?: boolean
   )
 }
 
-function Source({ a, keyStory, compact }: { a: Article; keyStory?: boolean; compact?: boolean }) {
+function Source({ a, keyStory, compact, read }: { a: Article; keyStory?: boolean; compact?: boolean; read?: boolean }) {
   return (
     <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-[var(--muted)]">
       <SourceMark publisher={a.publisher} />
       <span className="truncate font-[560] text-[var(--text)] opacity-80">{a.publisher}</span>
       <span className="shrink-0 text-[var(--faint)]">· {age(a.publishedAt)}</span>
+      {read && <span className="flex shrink-0 items-center gap-0.5 font-[620] text-[var(--faint)]">· <Check size={12} strokeWidth={3} />Read</span>}
       {!compact && <Topic a={a} keyStory={keyStory} className="ml-auto pl-2" />}
     </div>
   )
 }
 
 function Cover({ a, nr }: { a: Article; nr: Newsroom }) {
-  const link = useLink()
+  const link = useLink(), card = useCard()(a)
   const [loaded, setLoaded] = useState(false)
   const glow = useAmbient(nr.imageOf(a))
   return (
@@ -429,13 +445,13 @@ function Cover({ a, nr }: { a: Article; nr: Newsroom }) {
         <motion.img src={nr.imageOf(a)} alt="" decoding="async" onLoad={() => setLoaded(true)} onError={() => nr.imageFailed(a.id)}
           initial={false} animate={{ opacity: loaded ? 1 : 0, scale: loaded ? 1 : 1.05 }} transition={{ duration: 0.7 }} className="aspect-[1.9] w-full object-cover" />
       </a>
-      <div className="relative px-4 pt-3.5 min-[700px]:px-1">
+      <div onClick={card.onClick} className={`group relative px-4 pt-3.5 min-[700px]:px-1 ${card.className}`}>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-[var(--text)] px-2 py-[3px] text-[10.5px] font-[750] tracking-[0.06em] text-[var(--bg)] uppercase">Cover story</span>
           <Topic a={a} />
         </div>
         <a {...link(a)}
-          className="display mt-2 block text-[27px] leading-[1.1] font-[720] tracking-[-0.025em] text-[var(--text)] transition-colors hover:text-[var(--blue)] active:text-[var(--blue)] lg:mt-3 lg:text-[36px] lg:leading-[1.08] lg:tracking-[-0.028em]">{a.title}</a>
+          className="display mt-2 block text-[27px] leading-[1.1] font-[720] tracking-[-0.025em] text-[var(--text)] transition-colors group-hover:text-[var(--blue)] group-active:text-[var(--blue)] lg:mt-3 lg:text-[36px] lg:leading-[1.08] lg:tracking-[-0.028em]">{a.title}</a>
         <p className="mt-2 text-[15.5px] leading-[1.5] text-[var(--muted)] lg:mt-3 lg:max-w-[680px] lg:text-[17px]">{a.why}</p>
         <div className="mt-2.5"><Source a={a} compact /></div>
         <Foot a={a} nr={nr} />
@@ -445,12 +461,12 @@ function Cover({ a, nr }: { a: Article; nr: Newsroom }) {
 }
 
 function Feature({ a, nr, i, only }: { a: Article; nr: Newsroom; i: number; only: boolean }) {
-  const link = useLink()
+  const link = useLink(), card = useCard()(a)
   const [loaded, setLoaded] = useState(false)
   return (
     <motion.article id={`story-${a.id}`} layout="position" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }}
-      transition={{ ...spring, delay: 0.15 + i * 0.08 }}
-      className={`flex shrink-0 snap-start scroll-mt-24 flex-col overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow)] transition-shadow duration-300 hover:shadow-[var(--shadow-lift)] min-[760px]:w-auto ${only ? 'w-full min-[760px]:col-span-2' : 'w-[80%] min-[700px]:w-[calc(50%-6px)]'}`}>
+      transition={{ ...spring, delay: 0.15 + i * 0.08 }} onClick={card.onClick}
+      className={`group flex shrink-0 ${card.className} snap-start scroll-mt-24 flex-col overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow)] transition-shadow duration-300 hover:shadow-[var(--shadow-lift)] min-[760px]:w-auto ${only ? 'w-full min-[760px]:col-span-2' : 'w-[80%] min-[700px]:w-[calc(50%-6px)]'}`}>
       <a {...link(a)} aria-label={`Read: ${a.title}`} className="relative block overflow-hidden bg-[var(--surface-2)]">
         {!loaded && <div className="shimmer absolute inset-0" />}
         <motion.img src={nr.imageOf(a)} alt="" decoding="async" onLoad={() => setLoaded(true)} onError={() => nr.imageFailed(a.id)}
@@ -460,7 +476,7 @@ function Feature({ a, nr, i, only }: { a: Article; nr: Newsroom; i: number; only
         <Topic a={a} keyStory className="mb-1" />
         <Source a={a} compact />
         <a {...link(a)}
-          className="display mt-1.5 text-[17.5px] leading-[1.22] font-[660] tracking-[-0.012em] text-[var(--text)] transition-colors hover:text-[var(--blue)] active:text-[var(--blue)] lg:text-[19px]">{a.title}</a>
+          className="display mt-1.5 text-[17.5px] leading-[1.22] font-[660] tracking-[-0.012em] text-[var(--text)] transition-colors group-hover:text-[var(--blue)] group-active:text-[var(--blue)] lg:text-[19px]">{a.title}</a>
         <p className="mt-1 line-clamp-3 text-[13.5px] leading-[1.5] text-[var(--muted)]">{a.why}</p>
         <div className="mt-auto"><Foot a={a} nr={nr} lean /></div>
       </div>
@@ -469,20 +485,19 @@ function Feature({ a, nr, i, only }: { a: Article; nr: Newsroom; i: number; only
 }
 
 function Row({ a, nr, i, rank }: { a: Article; nr: Newsroom; i: number; rank?: number }) {
-  const link = useLink()
+  const link = useLink(), card = useCard()(a)
   const { read } = useReader()
   return (
     <motion.article id={`story-${a.id}`} layout initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, height: 0, transition: { duration: 0.28 } }}
-      transition={{ ...spring, delay: Math.min(i, 8) * 0.025 }}
-      className={`grid scroll-mt-24 overflow-hidden border-b border-[var(--hair)] pt-4 pb-0.5 ${rank ? 'grid-cols-[34px_1fr] gap-x-1' : ''}`}>
+      transition={{ ...spring, delay: Math.min(i, 8) * 0.025 }} onClick={card.onClick}
+      className={`group grid scroll-mt-24 overflow-hidden border-b border-[var(--hair)] pt-4 pb-0.5 ${card.className} ${rank ? 'grid-cols-[34px_1fr] gap-x-1' : ''}`}>
       {rank && (
         <motion.span key={rank} initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
           className="display pt-[1px] text-[25px] leading-none font-[250] tracking-[-0.04em] text-[var(--faint)] tabular-nums">{String(rank).padStart(2, '0')}</motion.span>
       )}
       <div className="min-w-0">
-        <Source a={a} />
-        <a {...link(a)} className={`display mt-1 block text-[18px] leading-[1.3] font-[620] tracking-[-0.01em] transition-colors hover:text-[var(--blue)] active:text-[var(--blue)] lg:text-[19px] ${read.has(a.id) ? 'text-[var(--muted)]' : ''}`}>
-          {read.has(a.id) && <span className="mr-1.5 inline-flex -translate-y-[2px] items-center gap-0.5 rounded-full bg-[var(--surface-2)] px-1.5 py-[1px] align-middle text-[10.5px] font-[650] text-[var(--faint)]"><Check size={11} strokeWidth={3} />Read</span>}
+        <Source a={a} read={read.has(a.id)} />
+        <a {...link(a)} className={`display mt-1 block text-[18px] leading-[1.3] font-[620] tracking-[-0.01em] transition-colors group-hover:text-[var(--blue)] group-active:text-[var(--blue)] lg:text-[19px] ${read.has(a.id) ? 'text-[var(--muted)]' : ''}`}>
           {a.title}
         </a>
         {a.update && a.updateNote && <p className="mt-1 text-[13.5px] font-[600] leading-[1.5] text-[var(--text)]">What’s new: {a.updateNote}</p>}
@@ -531,7 +546,7 @@ function Foot({ a, nr, compact, lean }: { a: Article; nr: Newsroom; compact?: bo
   const reviewed = a.evidence?.status === 'source-reviewed'
   const learned = !nr.archived && Math.abs(nr.affinity(a)) > 0.5
   return (
-    <div className="pb-1">
+    <div data-foot className="pb-1">
       <div className={`flex items-center ${compact ? '-mx-2 flex-col items-stretch' : '-mr-2.5'}`}>
         <button aria-expanded={open} onClick={() => setOpen(!open)} className={`flex h-11 items-center gap-1 whitespace-nowrap text-[12.5px] font-[620] text-[var(--blue)] ${compact ? 'order-2 -mt-2 px-2' : ''}`}>
           {compact ? 'Why?' : 'Why this story?'} <motion.span animate={{ rotate: open ? 180 : 0 }}><ChevronDown size={14} /></motion.span>

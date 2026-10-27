@@ -59,8 +59,17 @@ export const db = {
   },
 }
 
+/** Calls `changed` when the phone finds this app's data changed on the box after answering a read from its kept copy:
+ *  read again. Returns the unsubscribe. Without a listener (or a `useQuery`), the phone reloads the page instead. */
+export function onDataChange(changed: () => void): () => void {
+  const listener = (e: Event) => { e.preventDefault(); changed() }
+  window.addEventListener('talaria:data', listener)
+  return () => window.removeEventListener('talaria:data', listener)
+}
+
 /** A query's rows, read when the component mounts and again when `sql` or `params` change or `refresh()` is called
- *  (after a write). `rows` stays the last answer while a new one loads, so lists don't flash empty. */
+ *  (after a write), or when the phone finds the data changed. `rows` stays the last answer while a new one loads, so
+ *  lists don't flash empty. */
 export function useQuery<T = Row>(sql: string | null, params?: Params) {
   const [rows, setRows] = useState<T[]>()
   const [error, setError] = useState<Error>()
@@ -79,5 +88,6 @@ export function useQuery<T = Row>(sql: string | null, params?: Params) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sql, key, tick])
   const refresh = useCallback(() => setTick((t) => t + 1), [])
+  useEffect(() => onDataChange(refresh), [refresh])
   return { rows, error, loading, refresh }
 }

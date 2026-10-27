@@ -1,4 +1,7 @@
 {
+  "title": "Newsroom",
+  "description": "An edited news app: on your schedule, Hermes reads your sources and publishes an edition of the stories worth your time, with a reason for each.",
+  "glyph": "broadcast",
   "shared": "newsroom",
   "venv": "newsroom",
   "requirements": [

@@ -244,16 +244,20 @@ def _tail(path: Path, lines: int = 30) -> str:
 
 def title(name: str) -> str | None:
     """The app's ``meta.title``, read from its App.tsx without running it (as talaria/apps.mjs does)."""
+    return meta(name, "title")
+
+
+def meta(name: str, key: str) -> str | None:
+    """A string in the app's ``export const meta = { … }``: ``title``, or ``glyph`` (its icon, appprefs.ICONS)."""
     src = home() / "workspace" / "apps" / name
     for f in ("App.tsx", "App.jsx"):
         try:
             text = (src / f).read_text(errors="replace")
         except OSError:
             continue
-        m = re.search(r"export\s+const\s+meta\s*(?::[^=]+)?=\s*\{[^}]*?\btitle\s*:\s*(['\"`])(.*?)\1", text, re.S)
+        m = re.search(r"export\s+const\s+meta\s*(?::[^=]+)?=\s*\{[^}]*?\b" + key + r"\s*:\s*(['\"`])(.*?)\1", text, re.S)
         return m.group(2) if m else None
     return None
-
 
 if __name__ == "__main__":
     try:

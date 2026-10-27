@@ -6,7 +6,9 @@ routine reads each run.
 
 Each device (the phone, Hermes Desktop) keeps its own votes and sends all of them; the file keeps every device's set
 under "devices" and, in "votes", one vote per story, the latest of them, so one device's sync never wipes another's.
-A 👎 can carry why: "reason" (topic, seen, source, quality, misleading, other) and the reader's "note".
+A 👎 can carry why: "reason" (topic, seen, source, quality, misleading, other) and the reader's "note". A vote of 0
+is one taken back: it stays in the device's set, so it outlasts the older vote other devices still send, and is left
+out of "votes".
 """
 import json
 import re
@@ -21,7 +23,7 @@ REASONS = {"topic", "seen", "source", "quality", "misleading", "other"}
 
 
 def clean(raw) -> list[dict]:
-    votes = [{k: v[k] for k in KEEP if k in v} for v in raw if isinstance(v, dict) and v.get("value") in (1, -1)][-2000:]
+    votes = [{k: v[k] for k in KEEP if k in v} for v in raw if isinstance(v, dict) and v.get("value") in (1, -1, 0)][-2000:]
     for v in votes:
         if v.get("reason") not in REASONS:
             v.pop("reason", None)

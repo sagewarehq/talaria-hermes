@@ -1,6 +1,6 @@
 import { Screen } from '@shared/Screen'
 
-export const meta = { title: '__TITLE__' }
+export const meta = { title: '__TITLE__', glyph: '__GLYPH__' }
 
 export default function App() {
   return (

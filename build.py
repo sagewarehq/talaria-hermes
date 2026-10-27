@@ -2,10 +2,11 @@
 
     python3 ~/.hermes/plugins/talaria/build.py <name>          build one app
     python3 ~/.hermes/plugins/talaria/build.py --all           build every app in the workspace
-    python3 ~/.hermes/plugins/talaria/build.py --new <name>    start an app from the template, then build it
+    python3 ~/.hermes/plugins/talaria/build.py --new <name> <icon>  start an app from the template, then build it
     python3 ~/.hermes/plugins/talaria/build.py migrate <name>  move an app from before the workspace into it
     python3 ~/.hermes/plugins/talaria/build.py add <pkg>…      npm install packages into the workspace
     python3 ~/.hermes/plugins/talaria/build.py --starters      install the apps Talaria ships with, once each
+    python3 ~/.hermes/plugins/talaria/build.py --starter <name>  install one of them now (the Apps marketplace)
 
 An app's source is ``~/.hermes/talaria/workspace/apps/<name>/``; it's built into ``~/.hermes/talaria/apps/<name>/``,
 the folder the phone, the preview and Desktop load. A build only replaces what the last build wrote there (listed in
@@ -21,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -45,6 +47,15 @@ CODE = {".html", ".htm", ".js", ".mjs", ".jsx", ".tsx", ".ts", ".css"}
 
 class BuildError(Exception):
     pass
+
+
+def icons() -> tuple[str, ...]:
+    """The icons an app may wear (icons.py), loaded by path: this file runs as a script, outside the package."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("talaria_icons", HERE / "icons.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.ICONS
 
 
 def talaria_home() -> Path:
@@ -234,7 +245,8 @@ def older(name: str) -> bool:
     return (built(name) / "index.html").is_file() and not (built(name) / ".build.json").is_file()
 
 
-def new_app(name: str, ws: Path, title: str | None = None) -> None:
+def new_app(name: str, ws: Path, title: str | None = None, glyph: str | None = None) -> None:
+    """An app from the template, with its title and its icon (``meta.glyph``; a migrated app may start without)."""
     if name in RESERVED:
         raise BuildError(f"{name} is taken by the workspace itself; pick another name.")
     src = ws / "apps" / name
@@ -244,7 +256,9 @@ def new_app(name: str, ws: Path, title: str | None = None) -> None:
     title = title or name.replace("-", " ").replace("_", " ").title()
     for f in src.rglob("*"):
         if f.is_file():
-            f.write_text(f.read_text().replace("__TITLE__", title))
+            text = f.read_text().replace("__TITLE__", title)
+            text = text.replace("__GLYPH__", glyph) if glyph else text.replace(", glyph: '__GLYPH__'", "")
+            f.write_text(text)
 
 
 def migrate(name: str, ws: Path) -> None:
@@ -279,13 +293,24 @@ def starters_record() -> Path:
     return talaria_home() / "starters.json"
 
 
-def install_starter(name: str, ws: Path, env: dict[str, str]) -> str:
+def unchanged_copy(src: Path, dest: Path) -> bool:
+    """dest holds nothing but src's files as they ship (or isn't there): the starter's own copy, safe to replace."""
+    if not dest.exists():
+        return True
+    theirs = files_in(dest)
+    return theirs <= files_in(src) and all((dest / f).read_bytes() == (src / f).read_bytes() for f in theirs)
+
+
+def install_starter(name: str, ws: Path, env: dict[str, str], retry: bool = False) -> str:
     """Install a starter app (starters/<name>/) once: its source into the workspace, its shared code, its folder's
     scripts and settings, its Python packages in a venv of its own, then build it. A starter that's already there
-    (the user's own app by that name, or this one) is left alone, and so is one the user has deleted since."""
+    (the user's own app by that name, or this one) is left alone, and so is one the user has deleted since. A retry
+    of one that failed picks up where it stopped: its source is the starter's, and nothing was built."""
     src = STARTERS / name
     meta = json.loads((src / "starter.json").read_text())
-    if (ws / "apps" / name).exists() or built(name).exists():
+    if retry and not (built(name) / "index.html").exists() and unchanged_copy(src / "source", ws / "apps" / name):
+        shutil.rmtree(ws / "apps" / name, ignore_errors=True)
+    elif (ws / "apps" / name).exists() or built(name).exists():
         return "skipped: already there"
     shutil.copytree(src / "source", ws / "apps" / name)
     if meta.get("shared") and not (ws / "shared" / meta["shared"]).exists():
@@ -317,11 +342,65 @@ def install_starters(ws: Path, env: dict[str, str]) -> dict[str, str]:
         if name in done:
             continue
         try:
-            done[name] = install_starter(name, ws, env)
+            with announced(name):
+                done[name] = install_starter(name, ws, env)
         except (BuildError, OSError, ValueError, subprocess.SubprocessError) as e:
             done[name] = f"failed: {e}"[:300]
         starters_record().write_text(json.dumps(done, indent=1) + "\n")
     return done
+
+
+def installing(name: str) -> Path:
+    """While a starter installs from the Apps marketplace: who's installing it and since when (``/talaria catalog``
+    reads it; the install removes it when it's done, whatever the outcome)."""
+    return talaria_home() / "installing" / f"{name}.json"
+
+
+@contextmanager
+def announced(name: str):
+    """The marketplace shows this starter as installing while it does, first run's install included."""
+    f = installing(name)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"pid": os.getpid(), "started": time.time()}))
+    try:
+        yield
+    finally:
+        f.unlink(missing_ok=True)
+
+
+def record(name: str, outcome: str) -> None:
+    """Note a starter's install outcome in talaria/starters.json, beside the others."""
+    try:
+        done = json.loads(starters_record().read_text())
+    except (OSError, ValueError):
+        done = {}
+    starters_record().parent.mkdir(parents=True, exist_ok=True)
+    starters_record().write_text(json.dumps({**done, name: outcome}, indent=1) + "\n")
+
+
+def starter_outcome(name: str) -> str:
+    """What happened the last time this starter was installed, or "" if it never was."""
+    try:
+        return str(json.loads(starters_record().read_text()).get(name) or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def install_chosen(name: str, ws: Path, env: dict[str, str]) -> str:
+    """A starter someone picked in the Apps marketplace: installed even if it was recorded before (one deleted since,
+    or a first try that failed), never over an app already there. The outcome is recorded like a first-run one."""
+    if starter_outcome(name) == "installed" and (built(name) / "index.html").exists():
+        return "installed"  # first run's install finished while this one waited for the lock
+    try:
+        if not (STARTERS / name / "starter.json").is_file():
+            outcome = f"failed: Talaria doesn't ship an app called {name}."
+        else:
+            with announced(name):
+                outcome = install_starter(name, ws, env, retry=starter_outcome(name).startswith("failed"))
+    except (BuildError, OSError, ValueError, subprocess.SubprocessError) as e:
+        outcome = f"failed: {e}"[:300]
+    record(name, outcome)
+    return outcome
 
 
 def main(argv: list[str]) -> int:
@@ -329,6 +408,8 @@ def main(argv: list[str]) -> int:
         print(__doc__.strip().split("\n\n")[1], file=sys.stderr)
         return 2
     ws = workspace()
+    if argv[0] == "--starter":
+        return install_starter_main(argv[1:2], ws)
     try:
         env = node_env()
         with locked(ws):
@@ -359,7 +440,11 @@ def main(argv: list[str]) -> int:
             if argv[0] == "--new":
                 if older(names[0]):  # the template would replace the live app on the phone
                     raise BuildError(f"{names[0]} is an app from before the workspace: use migrate {names[0]}.")
-                new_app(names[0], ws)
+                glyph = argv[2] if len(argv) > 2 else None
+                if glyph not in icons():  # every app starts with its icon in Talaria's lists and sidebars
+                    raise BuildError(f"Pick its icon: --new {names[0]} <icon>, the one that fits best of "
+                                     f"{', '.join(icons())}." + (f" ({glyph!r} isn't one.)" if glyph else ""))
+                new_app(names[0], ws, glyph=glyph)
                 print(f"source: {ws / 'apps' / names[0]}/")
             install(ws, env)
             failed = 0
@@ -373,6 +458,29 @@ def main(argv: list[str]) -> int:
     except BuildError as e:
         print(e, file=sys.stderr)
         return 1
+
+
+def install_starter_main(names: list[str], ws: Path) -> int:
+    """build.py --starter <name>: the marketplace's install, run detached by /talaria install. Its progress file goes
+    whatever happens, so the Apps list never shows an install that stopped as still running."""
+    if not names or not NAME.fullmatch(names[0]):
+        print("--starter needs the name of an app Talaria ships with.", file=sys.stderr)
+        return 2
+    name = names[0]
+    try:
+        try:
+            env = node_env()
+        except BuildError as e:
+            outcome = f"failed: {e}"[:300]
+            record(name, outcome)
+        else:
+            with locked(ws):
+                seed(ws)
+                outcome = install_chosen(name, ws, env)
+    finally:
+        installing(name).unlink(missing_ok=True)
+    print(f"{name}: {outcome}")
+    return 0 if outcome == "installed" else 1
 
 
 if __name__ == "__main__":

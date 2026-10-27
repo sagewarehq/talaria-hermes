@@ -4,7 +4,7 @@
     extract.py <app folder>
 
 Writes articles/<id>.json beside the editions: the article as plain blocks (paragraphs, headings, list items, quotes,
-and its media), never HTML, so the app renders text only. Media is where the story has it: a photo or chart as its
+code, and its media), never HTML, so the app renders text only. Media is where the story has it: a photo or chart as its
 https address on the publisher's site (shown from there, never downloaded), and a video or chart embed from a known
 player, rebuilt from its id. Skips stories already extracted, and records a failure (paywall, block, too little
 text) so the reader falls back to the publisher's page instead of retrying every run.
@@ -14,6 +14,7 @@ import datetime as dt
 import json
 import re
 import sys
+import textwrap
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -30,8 +31,9 @@ _lower = "translate(concat(@id,' ',@class),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefg
 PRUNE = ["//dialog", "//template", "//*[@role='dialog' or @role='alertdialog' or @aria-modal='true']",
          f"//*[contains({_lower},'cookie') or contains({_lower},'consent') or contains({_lower},'gdpr')]"]
 # A page's legal text, which an extraction that went wrong starts with instead of the story.
-# Bumped when what's extracted changes, so stored articles are extracted again (2: media).
-VERSION = 2
+# Bumped when what's extracted changes, so stored articles are extracted again (2: media, 3: code, 4: inline code,
+# 5: wrapped lines joined).
+VERSION = 5
 MAX_IMAGES = 12
 # An image that's the site's furniture, not the story's: by its address or its alt text.
 FURNITURE = re.compile(r"logo|/icons?/|favicon|avatar|sprite|badge|banner|navigation|newsletter|promo|advert|placeholder|"
@@ -90,6 +92,22 @@ def embeds(html: str, url: str) -> tuple[str, list[dict]]:
     return (lxml.html.tostring(doc, encoding="unicode"), found) if found else (html, [])
 
 
+def pres(html: str) -> str:
+    """The page with each bare <pre> wrapped in <code>, which trafilatura keeps as a code block; it flattens a bare one
+    into lines of text."""
+    try:
+        doc = lxml.html.fromstring(html)
+    except (ValueError, lxml.etree.ParserError):
+        return html
+    bare = [pre for pre in doc.iter("pre") if not any(c.tag == "code" for c in pre)]
+    for pre in bare:
+        code = lxml.html.Element("code")
+        code.text, pre.text = pre.text, None
+        code.extend(list(pre))
+        pre.append(code)
+    return lxml.html.tostring(doc, encoding="unicode") if bare else html
+
+
 IMAGE = re.compile(r"!\[([^\]]*)\]\((\S+?)(?:\s+\"[^\"]*\")?\)")
 
 
@@ -104,9 +122,30 @@ def media(alt: str, src: str, url: str, found: list[dict]) -> dict | None:
 
 
 def blocks(markdown: str, url: str = "", found: list[dict] | None = None) -> list[dict]:
-    out = []
-    for line in markdown.splitlines():
+    out, code, last = [], None, None
+    # Each fence on a line of its own: trafilatura can write one straight after the text before it, even after the
+    # closing backtick of inline code (````), so a fence is a run's last three.
+    for line in re.sub(r"[ \t]*```(?!`)[ \t]*", "\n```\n", markdown).splitlines():
+        # The block the line before made, which a line of plain text right under it continues: a page whose source
+        # wraps its paragraphs keeps the breaks, where separate paragraphs (and a <br>) have a blank line between.
+        prev, last = last, None
+        # A fenced code block, as it's written: its lines and their indentation, nothing taken out.
+        if line.strip().startswith("```"):
+            if code is None:
+                code = []
+            else:
+                if text := textwrap.dedent("\n".join(code)).strip("\n"):
+                    out.append({"t": "code", "text": text})
+                code = None
+            continue
+        if code is not None:
+            code.append(line.rstrip())
+            continue
         line = line.strip()
+        # A <code> of one line, on a line of its own.
+        if re.fullmatch(r"`[^`]+`", line):
+            out.append({"t": "code", "text": line[1:-1]})
+            continue
         if not line or line.startswith("|"):
             continue
         # Images (and the embeds marked as images) on the line, after its text; linked images too.
@@ -117,20 +156,50 @@ def blocks(markdown: str, url: str = "", found: list[dict] | None = None) -> lis
             out.extend(pictures)
             continue
         line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)  # links to their text
-        line = re.sub(r"[*_`]{1,3}([^*_`]+)[*_`]{1,3}", r"\1", line)
-        line = re.sub(r"\*{2,}|_{2,}|`", "", line).strip()  # any emphasis left unbalanced
-        if not line:
+        # Emphasis out, outside inline code: what's inside it (a name_with_underscores) is kept as written, between
+        # marks until the line's kind is known.
+        line = "".join(f"\0{part[1:-1]}\0" if part.startswith("`") and part.endswith("`") and len(part) > 1 else
+                       re.sub(r"\*{2,}|_{2,}|`|\0", "", re.sub(r"[*_]{1,3}([^*_]+)[*_]{1,3}", r"\1", part))
+                       for part in re.split(r"(`[^`]+`)", line)).strip()
+        if not line.replace("\0", "").strip():
             continue
         if line.startswith("#"):
-            out.append({"t": "h", "text": line.lstrip("# ")})
+            out.append(inline("h", line.lstrip("# ")))
         elif re.match(r"^[-*+] ", line) or re.match(r"^\d+\. ", line):
-            out.append({"t": "li", "text": re.sub(r"^([-*+]|\d+\.) ", "", line)})
+            out.append(inline("li", re.sub(r"^([-*+]|\d+\.) ", "", line)))
+            last = None if pictures else out[-1]
         elif line.startswith(">"):
-            out.append({"t": "q", "text": line.lstrip("> ")})
+            out.append(inline("q", line.lstrip("> ")))
+            last = None if pictures else out[-1]
+        elif prev and prev["t"] in ("p", "q", "li"):
+            join(prev, inline("p", line))
+            last = None if pictures else prev
         else:
-            out.append({"t": "p", "text": line})
+            out.append(inline("p", line))
+            last = None if pictures else out[-1]
         out.extend(pictures)
+    if code and (text := textwrap.dedent("\n".join(code)).strip("\n")):  # a fence left open at the end
+        out.append({"t": "code", "text": text})
     return tidy(out)
+
+
+def inline(t: str, line: str) -> dict:
+    """A block of text, with its inline code as parts when it has any: the text between, then code, then text, and
+    so on. The text alone stays whole, for counting and matching."""
+    parts = line.split("\0")
+    block = {"t": t, "text": "".join(parts)}
+    if len(parts) > 1:
+        block["parts"] = parts
+    return block
+
+
+def join(block: dict, more: dict) -> None:
+    """A wrapped line onto the block it continues, with the parts of both (each starts and ends with text)."""
+    a, b = block.get("parts") or [block["text"]], more.get("parts") or [more["text"]]
+    parts = [*a[:-1], f"{a[-1]} {b[0]}", *b[1:]]
+    block["text"] = "".join(parts)
+    if len(parts) > 1:
+        block["parts"] = parts
 
 
 def tidy(body: list[dict]) -> list[dict]:
@@ -172,7 +241,7 @@ def relevance(body: list[dict], a: dict) -> int:
 
 def candidates(html: str, url: str):
     """Trafilatura's readings of the page, most precise first, with what a reader never sees pruned."""
-    marked, found = embeds(html, url)
+    marked, found = embeds(pres(html), url)
     for kw in ({"favor_precision": True}, {"favor_recall": True}):
         try:
             md = trafilatura.extract(marked, output_format="markdown", include_comments=False, include_tables=False,

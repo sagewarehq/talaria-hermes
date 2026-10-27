@@ -11,19 +11,24 @@ raises.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import logging
 import os
 import re
 import shlex
 import threading
+import time
+from pathlib import Path
 from typing import Any
 
 from . import store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.7.0"
+VERSION = "0.10.0"
+# What the clients can ask of it; they offer an update below what they need. 2: catalog and install.
+API = 2
 
 
 def _safe(fn):
@@ -50,40 +55,129 @@ def _turn_starts(session_id: str, turn_id: str, platform: str) -> None:
 
 
 def pre_llm_call(session_id: str = "", turn_id: str = "", platform: str = "", **_: Any) -> dict | None:
-    """Once per turn, before the model runs. In a Desktop chat while you share an app page with Hermes (the eye
-    beside an app, or Chat about this page), what it shows rides along with your message: Hermes then answers
-    about the page without having to think of app_snapshot. Nothing otherwise, and never on other platforms."""
+    """Once per turn, before the model runs. While the phone is in voice chat on this session (/talaria voice),
+    how to answer out loud rides along with your message. In a Desktop chat while you share an app page with
+    Hermes (the eye beside an app, or Chat about this page), what it shows rides along too: Hermes then answers
+    about the page without having to think of app_snapshot. A page the phone handed over for this session (its chat
+    over an app, /talaria page) comes first."""
     _turn_starts(session_id, turn_id, platform)
-    if platform != "desktop":
-        return None
+    parts = [VOICE_CONTEXT] if voice_on(session_id) else []
+    if platform == "desktop":
+        try:
+            page = page_context(take_page(session_id)) or shared_page_context()
+            if page:
+                parts.append(page)
+        except Exception:
+            logger.debug("talaria: reading the shared page failed", exc_info=True)
+    return {"context": "\n\n".join(parts)} if parts else None
+
+
+# Hermes's voice route (voice_turn) picks a faster model but says nothing about speaking; the phone's voice chat
+# reads the reply aloud as it streams, so it asks for an answer made for the ear.
+VOICE_CONTEXT = """[Talaria voice chat] The user is talking to you from their iPhone and hears your reply read aloud as it streams.
+- Speak first: before any tool call or longer work, reply with one short sentence saying what you're about to do ("Sure, let me check your inbox."), then do the work. Don't go quiet while you work.
+- Keep it short and conversational: no tables, code blocks, headings or lists unless asked.
+- Don't read emails, messages or documents out word for word. Say who it's from and what it's about, then the gist in a sentence or two. Leave out email addresses, headers, signatures, disclaimers, quoted earlier messages, links and tracking numbers."""
+
+VOICE_FRESH = 6 * 3600  # a voice chat the phone never closed (it died, or lost the connection) lapses
+
+
+def _voice_file(session_id: str):
+    return store.home() / "talaria" / "voice" / session_id
+
+
+def set_voice(session_id: str, on: bool) -> bool:
+    """The phone's voice chat on this session started or ended."""
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", session_id or ""):
+        return False
+    path = _voice_file(session_id)
+    if on:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(time.time()))
+    else:
+        path.unlink(missing_ok=True)
+    return True
+
+
+def voice_on(session_id: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", session_id or ""):
+        return False
     try:
-        context = shared_page_context()
-    except Exception:
-        logger.debug("talaria: reading the shared page failed", exc_info=True)
-        return None
-    return {"context": context} if context else None
+        return time.time() - _voice_file(session_id).stat().st_mtime < VOICE_FRESH
+    except OSError:
+        return False
 
 
 PAGE_CONTEXT_TEXT = 6_000
 
 
+PAGE_FRESH = 120  # seconds a phone's page waits for its turn
+
+
+def _page_file(session_id: str):
+    return store.home() / "talaria" / "pages" / f"{session_id}.json"
+
+
+def keep_page(session_id: str, shot: dict) -> bool:
+    """The phone's chat over an app hands over what the page shows just before it sends: kept for that session's
+    next turn (take_page)."""
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", session_id or "") or not isinstance(shot, dict):
+        return False
+    path = _page_file(session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({**shot, "at": time.time()}))
+    return True
+
+
+def take_page(session_id: str) -> dict | None:
+    """The page the phone handed over for this session's turn, once, if it's fresh."""
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", session_id or ""):
+        return None
+    path = _page_file(session_id)
+    try:
+        shot = json.loads(path.read_text())
+        path.unlink()
+    except (OSError, ValueError):
+        return None
+    return shot if time.time() - float(shot.get("at") or 0) < PAGE_FRESH else None
+
+
 def shared_page_context() -> str | None:
-    """The shared app page as a note for the turn: which app and page, and the text in view. Quick: a page that
-    doesn't answer in a couple of seconds is left out rather than holding up the reply."""
+    """The page shared from Desktop as a note for the turn. Quick: a page that doesn't answer in a couple of
+    seconds is left out rather than holding up the reply."""
     from . import appserver
-    shot = appserver.snapshot(wait=2)
+    return page_context(appserver.snapshot(wait=2))
+
+
+def page_context(shot: dict | None) -> str | None:
+    """An app page's snapshot as a note for the turn: which app and page, any selection, and the text in view."""
     if not shot or shot.get("error"):
         return None
     where = " · ".join(x for x in (shot.get("title") or shot.get("app"), shot.get("page")) if x)
-    lines = [f"[Talaria: the user has the app \"{shot.get('app')}\" open beside this chat and shared with you"
+    lines = [f"[Talaria: the user has the app \"{shot.get('app')}\" open with this chat and shared with you"
              f" ({where}). \"This\", \"here\" or \"on screen\" most likely mean it. What it shows now:]"]
     if shot.get("selection"):
         lines.append(f"Selected: {shot['selection'][:1500]}")
     seen = (shot.get("visible") or shot.get("text") or "")[:PAGE_CONTEXT_TEXT]
     lines.append(seen or "(no readable text)")
     if shot.get("scroll") is not None:
-        lines.append(f"[Scrolled {shot['scroll']}% down. app_snapshot reads the whole page, fresh.]")
+        lines.append(f"[Scrolled {shot['scroll']}% down."
+                     + (" app_snapshot reads the whole page, fresh.]" if shot.get("from") != "phone" else "]"))
+    if code := app_code(str(shot.get("app") or "")):
+        lines.append(f"[It's an app you built for the user; its code is in {code}. Talk about what it shows, or, "
+                     f"when they ask for a change to the app itself, make it following the talaria:app skill.]")
     return "\n".join(lines)
+
+
+def app_code(name: str) -> str | None:
+    """Where an app's code is: its workspace folder (an App.tsx app), else its folder of pages."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name):
+        return None
+    root = store.home() / "talaria"
+    for folder in (root / "workspace" / "apps" / name, root / "apps" / name):
+        if folder.is_dir():
+            return str(folder)
+    return None
 
 
 @_safe
@@ -214,8 +308,8 @@ def on_human_input_resolved(session_id: str = "", **_: Any) -> None:
 
 
 USAGE = ("usage: /talaria version | whoami | inbox [--json] | apps | open <app> [--via <host>] | action <app> <name> [base64 json]"
-         " | db-check"
-         " | dismiss <session_id> [turn_id] | classify <session_id>")
+         " | catalog | install <app> | db-check | app-icon <app> <icon|none> | pin <app> | unpin <app>"
+         " | page <session_id> <base64 json> | voice <session_id> on|off | dismiss <session_id> [turn_id] | classify <session_id>")
 
 
 def list_apps() -> list[dict[str, Any]]:
@@ -231,7 +325,8 @@ def list_apps() -> list[dict[str, Any]]:
             continue
         files = [f for f in d.rglob("*") if f.is_file()] + [f for f in (root / d.name).rglob("*") if f.is_file()]
         updated = max((f.stat().st_mtime for f in files), default=d.stat().st_mtime)
-        apps.append({"name": d.name, "title": appserver.title(d.name), "folder": str(root / d.name), "updated": updated})
+        apps.append({"name": d.name, "title": appserver.title(d.name), "folder": str(root / d.name), "updated": updated,
+                     "stamp": shell_stamp(root / d.name)})
         seen.add(d.name)
     for d in root.iterdir() if root.is_dir() else ():
         index = d / "index.html"
@@ -244,8 +339,25 @@ def list_apps() -> list[dict[str, Any]]:
         except OSError:
             pass
         updated = max((f.stat().st_mtime for f in d.rglob("*") if f.is_file()), default=index.stat().st_mtime)
-        apps.append({"name": d.name, "title": title, "folder": str(d), "updated": updated})
+        apps.append({"name": d.name, "title": title, "folder": str(d), "updated": updated, "stamp": shell_stamp(d)})
     return sorted(apps, key=lambda a: a["updated"], reverse=True)
+
+
+# The files the iPhone serves from its kept copy of an app (AppShellCache.shell in CanvasView.swift; keep the two the
+# same). Anything else, a data.json a routine rewrites or the app's database, it reads from the box each time.
+SHELL = {".html", ".htm", ".js", ".mjs", ".jsx", ".tsx", ".ts", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+         ".avif", ".ico", ".woff", ".woff2", ".ttf", ".otf", ".wasm"}
+
+
+def shell_stamp(folder: Path) -> str:
+    """What the iPhone keys its copy of an app on: changes when a page, script, style, image or font changes, not
+    with its data. Sizes and times only, nothing read."""
+    files = sorted(f for f in folder.rglob("*") if f.is_file() and f.suffix.lower() in SHELL)
+    h = hashlib.sha256()
+    for f in files:
+        st = f.stat()
+        h.update(f"{f.relative_to(folder)}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+    return h.hexdigest()[:16]
 
 
 def handle_command(raw_args: str = "") -> str:
@@ -255,7 +367,7 @@ def handle_command(raw_args: str = "") -> str:
         return USAGE
     sub = args[0] if args else "inbox"
     if sub == "version":
-        return store.to_json({"plugin": "talaria", "version": VERSION, "api": 1})
+        return store.to_json({"plugin": "talaria", "version": VERSION, "api": API})
     if sub == "whoami":
         return store.to_json({"pid": os.getpid(), "start": store.own_start_time()})
     if sub == "inbox":
@@ -266,7 +378,21 @@ def handle_command(raw_args: str = "") -> str:
             return "Nothing running or waiting."
         return "\n".join(f"{r['state']:<9} {r.get('title') or r['session_id']}  {r.get('reason') or ''}".rstrip() for r in rows)
     if sub == "apps":
-        return store.to_json({"apps": list_apps()})
+        from . import appprefs, appserver
+        return store.to_json({"apps": appprefs.decorate(list_apps(), lambda name: appserver.meta(name, "glyph")),
+                              "icons": appprefs.ICONS})
+    if sub == "catalog":  # the Apps marketplace: the apps Talaria ships with, and whether each is here (market.py)
+        from . import market
+        return store.to_json(market.catalog())
+    if sub == "install" and len(args) == 2:  # one of them, installing in the background
+        from . import market
+        return store.to_json(market.install(args[1]))
+    if sub == "app-icon" and len(args) == 3:  # the icon Desktop and the iPhone show for an app (appprefs.ICONS)
+        from . import appprefs
+        return store.to_json(appprefs.set_icon(args[1], args[2]))
+    if sub in ("pin", "unpin") and len(args) == 2:  # an app in the sidebar, on every device
+        from . import appprefs
+        return store.to_json(appprefs.set_pinned(args[1], sub == "pin"))
     if sub == "open" and len(args) in (2, 4) and (len(args) == 2 or args[2] == "--via"):
         # Desktop forwards the port over its SSH connection; on a direct one it passes --via <the gateway's host>,
         # and gets the gate there and a ticket for this device (appserver.gate).
@@ -288,6 +414,15 @@ def handle_command(raw_args: str = "") -> str:
         except ValueError:
             return actions.failed("The request isn't base64.")
         return actions.run(store.home() / "talaria" / "apps", args[1], args[2], request)
+    if sub == "page" and len(args) == 3:  # the phone's chat over an app: what the page shows, for the next turn
+        import base64
+        try:
+            shot = json.loads(base64.b64decode(args[2], validate=True))
+        except ValueError:
+            return store.to_json({"ok": False, "error": "Not a base64 JSON page."})
+        return store.to_json({"ok": keep_page(args[1], shot)})
+    if sub == "voice" and len(args) == 3 and args[2] in ("on", "off"):  # the phone's voice chat on a session
+        return store.to_json({"ok": set_voice(args[1], args[2] == "on")})
     if sub == "db-check":  # is SQLite here for apps' databases, and how to add what's missing (db.py --check)
         from . import actions
         return store.to_json(actions.db_module().check())
@@ -382,4 +517,5 @@ def register(ctx) -> None:
                           description=APP_SNAPSHOT["description"], emoji="👁")
     ctx.register_command("talaria", handler=handle_command,
                          description="Talaria attention feed: running / waiting sessions across backends.",
-                         args_hint="version | whoami | inbox [--json] | apps | open <app> | action <app> <name> | dismiss <id> [turn]")
+                         args_hint="version | whoami | inbox [--json] | apps | open <app> | action <app> <name> | dismiss <id> [turn]"
+                                   " | app-icon <app> <icon> | pin <app> | unpin <app>")

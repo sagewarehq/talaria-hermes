@@ -6,6 +6,8 @@ import { createRoot } from 'react-dom/client'
 export interface Meta {
   /** The page's title, and the app's name in lists. */
   title?: string
+  /** Its icon in Talaria's lists and sidebars, from a fixed set (appprefs.py's ICONS); the user can pick another. */
+  glyph?: string
   /** An image in the app's folder, as a path relative to it: './favicon.svg'. */
   icon?: string
   /** The browser chrome's colour in light and dark mode. */

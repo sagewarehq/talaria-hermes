@@ -8,30 +8,21 @@ import { Glyph } from '@shared/newsroom/Icons'
 import { prefetch, useArticle, type Block } from '@shared/newsroom/useArticle'
 import type { Article, Newsroom } from '@shared/newsroom/useNewsroom'
 
-const READ = 'newsroom-read-v1'
 const Ctx = createContext<{ open: (id: string) => void; read: Set<string> }>({ open: () => {}, read: new Set() })
 export const useReader = () => useContext(Ctx)
-
-function loadRead(): Set<string> {
-  try { return new Set(Object.keys(JSON.parse(localStorage.getItem(READ) || '{}'))) } catch { return new Set() }
-}
 
 export function ReaderProvider({ nr, children, Source, Topic }: {
   nr: Newsroom; children: React.ReactNode
   Source: (p: { a: Article; compact?: boolean }) => React.ReactNode; Topic: (p: { a: Article; keyStory?: boolean; className?: string }) => React.ReactNode
 }) {
   const [id, setId] = useState<string | null>(() => history.state?.read ?? null)
-  const [read, setRead] = useState(loadRead)
+  // Read marks are shared by every device (useNewsroom, actions/read.py).
+  const { read, markRead } = nr
   useEffect(() => {
     const pop = () => setId(history.state?.read ?? null)
     addEventListener('popstate', pop)
     return () => removeEventListener('popstate', pop)
   }, [])
-  const markRead = (x: string) => setRead((r) => {
-    const next = new Set(r).add(x)
-    try { localStorage.setItem(READ, JSON.stringify(Object.fromEntries([...next].slice(-500).map((k) => [k, 1])))) } catch { /* fine */ }
-    return next
-  })
   const open = (x: string) => { history.pushState({ ...history.state, read: x }, ''); setId(x); markRead(x) }
   const go = (x: string) => { history.replaceState({ ...history.state, read: x }, ''); setId(x); markRead(x) }
   const close = () => (history.state?.read ? history.back() : setId(null))
@@ -188,12 +179,19 @@ function Blocks({ blocks, hero }: { blocks: Block[]; hero: boolean }) {
       {blocks.map((b, i) =>
         b.t === 'img' ? (hero && i < lead ? null : <Photo key={i} src={b.src} alt={b.alt ?? ''} />)
         : b.t === 'embed' ? (PLAYER.test(b.src) ? <Embed key={i} {...b} /> : null)
-        : b.t === 'h' ? <h2 key={i} className="display mt-7 mb-2 text-[20px] leading-[1.25] font-[680] tracking-[-0.01em]">{b.text}</h2>
-        : b.t === 'li' ? <p key={i} className="relative mb-2 pl-5 before:absolute before:left-1 before:top-[0.7em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-[var(--blue)]">{b.text}</p>
-        : b.t === 'q' ? <blockquote key={i} className="my-5 border-l-[3px] border-[var(--blue)] pl-4 italic text-[var(--muted)]">{b.text}</blockquote>
-        : <p key={i} className="mb-4">{b.text}</p>)}
+        : b.t === 'h' ? <h2 key={i} className="display mt-7 mb-2 text-[20px] leading-[1.25] font-[680] tracking-[-0.01em]"><Text {...b} /></h2>
+        : b.t === 'li' ? <p key={i} className="relative mb-2 pl-5 before:absolute before:left-1 before:top-[0.7em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-[var(--blue)]"><Text {...b} /></p>
+        : b.t === 'code' ? <pre key={i} className="my-5 overflow-x-auto rounded-[12px] border border-[var(--line)] bg-[var(--surface-2)] px-4 py-3 font-mono text-[13.5px] leading-[1.55] whitespace-pre [tab-size:4] [overflow-wrap:normal]"><code>{b.text}</code></pre>
+        : b.t === 'q' ? <blockquote key={i} className="my-5 border-l-[3px] border-[var(--blue)] pl-4 italic text-[var(--muted)]"><Text {...b} /></blockquote>
+        : <p key={i} className="mb-4"><Text {...b} /></p>)}
     </>
   )
+}
+
+/** A block's text, its inline code (every other part) set in the code face. */
+function Text({ text, parts }: { text: string; parts?: string[] }) {
+  if (!parts) return <>{text}</>
+  return <>{parts.map((s, i) => i % 2 ? <code key={i} className="rounded-[5px] bg-[var(--surface-2)] px-[0.3em] py-[0.08em] font-mono text-[0.84em] not-italic [overflow-wrap:anywhere]">{s}</code> : s)}</>
 }
 
 /** A photo or chart from the story, shown from the publisher's site; gone if it doesn't load. */

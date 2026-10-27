@@ -29,7 +29,7 @@ export type Phase = 'loading' | 'setup' | 'collecting' | 'ready'
 
 export const PAGE = 10
 export const LIMIT = 30
-const STORE = { saved: 'newsroom-saved-v1', votes: 'newsroom-votes-v1' }
+const STORE = { saved: 'newsroom-saved-v1', votes: 'newsroom-votes-v1', read: 'newsroom-read-v1' }
 const IMAGE = /^\.\/images\/[a-f0-9]{16}\.(jpg|png|webp|gif|avif)$/
 
 function readStore<T extends object>(key: string, fallback: T): [T, boolean] {
@@ -65,12 +65,19 @@ export function useNewsroom() {
   const [[saved, savedOK], setSavedState] = useState(() => readStore<Record<string, Saved>>(STORE.saved, {}))
   // The reading list is shared by every device through read-later.json (actions/saved.py); null until it's read.
   const [shared, setShared] = useState<boolean | null>(null)
-  // Every device's votes, as the editor has them (reader-feedback.json), for Liked.
-  const [synced, setSynced] = useState<Vote[]>([])
   const savedRef = useRef(saved)
   savedRef.current = saved
-  const [[votes, votesOK], setVotesState] = useState<[Votes, boolean]>(() => { const [v, ok] = readStore(STORE.votes, {}); return [sanitizeVotes(v), ok] })
-  const [storageOK, setStorageOK] = useState(savedOK && votesOK)
+  // Every device's votes, adopted from reader-feedback.json: the latest on each story wins, a vote taken back (0)
+  // included, so a 👎 on the phone hides the story here too.
+  const [[own, votesOK], setVotesState] = useState<[Votes, boolean]>(() => { const [v, ok] = readStore(STORE.votes, {}); return [sanitizeVotes(v), ok] })
+  const votesRef = useRef(own)
+  votesRef.current = own
+  const votes = useMemo(() => Object.fromEntries(Object.entries(own).filter(([, v]) => v.value !== 0)) as Votes, [own])
+  // The stories opened on any device (read.json, actions/read.py), and when.
+  const [[read, readOK], setReadState] = useState(() => readStore<Record<string, string | number>>(STORE.read, {}))
+  const readRef = useRef(read)
+  readRef.current = read
+  const [storageOK, setStorageOK] = useState(savedOK && votesOK && readOK)
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) { setLoading(true); setError(undefined) }
@@ -111,14 +118,17 @@ export function useNewsroom() {
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', tick) }
   }, [selected, load])
 
-  /** Read later and Liked from the server: adopt the shared reading list, and send it anything this device saved on
+  /** Votes, Read and Read later from the server. Adopt every device's votes and read marks (this device sends its
+   *  own up: votes from App.tsx, reads below), and the shared reading list, sending it anything this device saved on
    *  its own (before the list was shared, or while it couldn't reach it) that wasn't removed since. */
   const syncLists = useCallback(async () => {
-    const [list, feedback] = await Promise.all([
+    const [list, feedback, opened] = await Promise.all([
       maybeJSON('read-later.json').catch(() => null) as Promise<ReadLater | undefined | null>,
-      maybeJSON('reader-feedback.json').catch(() => null) as Promise<{ votes?: Vote[] } | undefined | null>,
+      maybeJSON('reader-feedback.json').catch(() => null) as Promise<{ votes?: Vote[]; devices?: Record<string, { votes?: Vote[] }> } | undefined | null>,
+      maybeJSON('read.json').catch(() => null) as Promise<{ read?: Record<string, string> } | undefined | null>,
     ])
-    if (feedback?.votes) setSynced(Object.values(sanitizeVotes(Object.fromEntries(feedback.votes.map((v) => [v.id, v])))))
+    if (feedback) adoptVotes([...(feedback.votes ?? []), ...Object.values(feedback.devices ?? {}).flatMap((d) => d.votes ?? [])])
+    if (opened !== null) void adoptRead(opened?.read ?? {})
     if (list === null) return setShared(false)
     const items = list?.items ?? {}, removed = list?.removed ?? {}
     const mine = Object.values(savedRef.current)
@@ -137,6 +147,37 @@ export function useNewsroom() {
     }
     persistSaved(next)
   }, [])
+
+  const adoptVotes = (theirs: Vote[]) => {
+    const next = { ...votesRef.current }
+    let changed = false
+    // A story can be in more than one device's set: the latest vote on it wins, wherever it was cast.
+    for (const v of theirs) {
+      const [clean] = v?.id ? Object.values(sanitizeVotes({ [v.id]: v })) : []
+      if (clean && clean.at > (next[clean.id]?.at ?? '')) { next[clean.id] = clean; changed = true }
+    }
+    if (changed) persistVotes(next)
+  }
+
+  const adoptRead = async (theirs: Record<string, string>) => {
+    const mine = readRef.current
+    const only = Object.keys(mine).filter((id) => !theirs[id])
+    const next = { ...mine, ...theirs }
+    if (only.length) await action('read', { ids: only }).catch(() => {})
+    persistRead(next)
+  }
+
+  const persistRead = (next: Record<string, string | number>) => {
+    // This device keeps the latest 500, fewer than the server's 1000, so all it has is on the server once sent.
+    const kept = Object.fromEntries(Object.entries(next).sort(([, a], [, b]) => String(a).localeCompare(String(b))).slice(-500))
+    try { localStorage.setItem(STORE.read, JSON.stringify(kept)) } catch { setStorageOK(false) }
+    setReadState([kept, true])
+  }
+
+  const persistVotes = (next: Votes) => {
+    try { localStorage.setItem(STORE.votes, JSON.stringify(next)) } catch { setStorageOK(false) }
+    setVotesState([next, true])
+  }
 
   const persistSaved = (next: Record<string, Saved>) => {
     try { localStorage.setItem(STORE.saved, JSON.stringify(next)) } catch { setStorageOK(false) }
@@ -162,15 +203,13 @@ export function useNewsroom() {
 
   // Liked: every story given 👍 on any device, the latest vote on each story deciding, newest first.
   const liked = useMemo(() => {
-    const latest = new Map<string, Vote>()
-    for (const v of [...synced, ...Object.values(votes)]) if (v.at >= (latest.get(v.id)?.at ?? '')) latest.set(v.id, v)
     const known = new Map([...pool, ...curated, ...Object.values(saved)].map((a) => [a.id, a]))
-    return [...latest.values()].filter((v) => v.value === 1).sort((a, b) => b.at.localeCompare(a.at)).map((v) => ({
+    return Object.values(votes).filter((v) => v.value === 1).sort((a, b) => b.at.localeCompare(a.at)).map((v) => ({
       ...(known.get(v.id) ?? { id: v.id, title: v.title, url: v.url, publisher: v.publisher, topics: v.topics, tags: v.tags,
                                publishedAt: v.at, priority: 0, key: false }),
       likedAt: v.at,
     }) as Article & { likedAt: string })
-  }, [synced, votes, pool, curated, saved])
+  }, [votes, pool, curated, saved])
 
   const ranked = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -224,10 +263,18 @@ export function useNewsroom() {
     newer: position > 0 ? index[position - 1] : undefined,
     open: (id: string | null) => { location.hash = id && id !== latestId ? `edition/${id}` : '' ; scrollTo({ top: 0 }) },
     vote: votes, saved, shared, likedCount: liked.length,
+    /** Every vote this device knows, takebacks included: what it sends to feedback.py. */
+    votesToSync: own,
+    read: useMemo(() => new Set(Object.keys(read)), [read]),
+    markRead: (id: string) => {
+      if (readRef.current[id]) return
+      const at = new Date().toISOString()
+      persistRead({ ...readRef.current, [id]: at })
+      action('read', { ids: [id], at }).catch(() => {})
+    },
     rate: (a: Article, value: 1 | -1) => {
-      const next = { ...votes }, previous = votes[a.id], removing = previous?.value === value
-      if (removing) delete next[a.id]
-      else next[a.id] = vote(a, value)
+      const next = { ...own }, previous = votes[a.id], removing = previous?.value === value
+      next[a.id] = removing ? takeback(a.id, previous) : vote(a, value)
       persist(saved, next)
       if (value === -1 && !removing && !selected) { setToast(undefined); setAsking({ article: a, previous }); return }
       setToast({ undo: { id: a.id, previous }, message: removing ? 'Feedback removed. Its ranking influence is gone.'
@@ -241,7 +288,7 @@ export function useNewsroom() {
       setAsking(undefined)
       if (!a || !votes[a.id]) return
       const text = note?.trim().slice(0, 500)
-      if (reason || text) persist(saved, { ...votes, [a.id]: { ...votes[a.id], reason, note: text || undefined } })
+      if (reason || text) persist(saved, { ...own, [a.id]: { ...votes[a.id], reason, note: text || undefined, at: new Date().toISOString() } })
       setToast({ undo: { id: a.id, previous: asking?.previous },
                  message: reason || text ? 'Thanks. Your editor will see why.' : 'Hidden. Similar stories will rank lower.' })
     },
@@ -249,15 +296,15 @@ export function useNewsroom() {
       const u = asking
       setAsking(undefined)
       if (!u) return
-      const next = { ...votes }; if (u.previous) next[u.article.id] = u.previous; else delete next[u.article.id]; persist(saved, next)
+      persist(saved, { ...own, [u.article.id]: restore(u.article.id, u.previous) })
     },
     undo: () => {
       const u = toast?.undo
-      if (u) { const next = { ...votes }; if (u.previous) next[u.id] = u.previous; else delete next[u.id]; persist(saved, next) }
+      if (u) persist(saved, { ...own, [u.id]: restore(u.id, u.previous) })
       setToast(undefined)
     },
     forget: (id: string) => {
-      const next = { ...votes }; delete next[id]; persist(saved, next)
+      persist(saved, { ...own, [id]: takeback(id, votes[id]) })
       setToast({ message: 'Feedback removed. Its ranking influence is gone.' })
     },
     exportVotes: () => {
@@ -280,6 +327,15 @@ export function useNewsroom() {
 }
 
 export type Newsroom = ReturnType<typeof useNewsroom>
+
+/** A vote taken back, now: it outlasts the vote it replaces on every device. */
+function takeback(id: string, v?: Vote): Vote {
+  return { id, title: v?.title ?? '', url: v?.url ?? '', publisher: v?.publisher ?? '', topics: v?.topics ?? [], tags: v?.tags ?? [],
+           value: 0, at: new Date().toISOString() }
+}
+
+/** An undo: the vote as it was, dated now so it wins over the one it undoes on the other devices too. */
+const restore = (id: string, previous?: Vote): Vote => (previous ? { ...previous, at: new Date().toISOString() } : takeback(id))
 
 /** The inline edition calendar's data: the published days of a month and the editions on the chosen day. */
 export function calendar(index: EditionEntry[], month: string) {
