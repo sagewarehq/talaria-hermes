@@ -26,7 +26,7 @@ from . import store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 # What the clients can ask of it; they offer an update below what they need. 2: catalog and install.
 API = 2
 

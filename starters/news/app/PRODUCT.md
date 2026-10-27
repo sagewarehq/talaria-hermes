@@ -4,7 +4,7 @@ web (Talaria app)
 ## Users
 The reader who set it up, reading on their phone in Talaria.
 ## Product Purpose
-An edited news app: on the reader's schedule (every 6 or 12 hours, or daily) Hermes reviews the reader's sources and publishes an edition of up to 30 stories
+An edited news app: on the reader's schedule (every 6 or 12 hours, or daily) Hermes reviews the reader's sources and aims for about 20 useful stories per edition (normally 18–22, maximum 30; never filler or unnecessary repeats),
 picked for their topics and interests, with a reason for each, an in-app reader, and votes that tune the ranking.
 ## Stack
 React + TypeScript in the Talaria Vite workspace: an App.tsx app in `~/.hermes/talaria/workspace/apps/news/`, shared

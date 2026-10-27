@@ -172,6 +172,8 @@ function Body({ a, nr, Source, Topic }: { a: Article; nr: Newsroom; Source: (p: 
 const PLAYER = /^https:\/\/(www\.youtube-nocookie\.com\/embed\/|player\.vimeo\.com\/video\/|flo\.uri\.sh\/|datawrapper\.dwcdn\.net\/)/
 
 function Blocks({ blocks, hero }: { blocks: Block[]; hero: boolean }) {
+  // Publisher metadata sometimes arrives as a standalone body block (not article prose).
+  blocks = blocks.filter((b) => !('text' in b && b.t !== 'code' && /^published\s*:?$/i.test(b.text.trim())))
   // The page's own lead photo is the hero already shown above the story.
   const lead = blocks.findIndex((b) => b.t === 'p')
   return (

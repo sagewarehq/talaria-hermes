@@ -8,6 +8,8 @@ what they care about are in `newsroom.json` (`topics`, `interests`). Write every
 - Material changes: releases, pricing, licensing, deployments, policies, incidents, decisions that affect what the
   reader builds, runs, buys or decides.
 - Specific mechanisms over vague trend pieces; primary sources over rewrites.
+- Read across every topic the reader configured in `newsroom.json`, not just technology: substantive general-interest
+  reporting and thoughtful features belong when the reader picked those topics. Breadth is not a quota.
 - For security: exploited vulnerabilities, credential exposure and supply-chain attacks affecting realistic
   environments, with remediation. Never imply the reader is affected unless the evidence establishes it.
 - Ignore deals, event promotion, celebrity and funding gossip, and anything outside the reader's topics, except the
@@ -27,17 +29,25 @@ what they care about are in `newsroom.json` (`topics`, `interests`). Write every
 4. Open the canonical source for the most consequential items and record the evidence status: `source-reviewed` or
    `feed-only` (attributed to the publisher). Distinguish announced from available, vendor claims from independent
    results, reported from confirmed exploitation.
-5. Select up to 30 stories (a limit, not a quota). For each: the exact article id, an integer priority 0–100, `key`,
+5. Aim for about 20 useful stories per edition (normally 18–22; hard maximum 30). Review the full candidate pool
+   across the reader's configured topics before settling for a short edition; seek substantive general-interest
+   coverage as well as technology. This is an affirmative selection target, not merely permission to select up to
+   30. Do not pad with repeats, weak stories or irrelevant material. If fewer than 18 qualify, explain the specific
+   shortfall in the run result (candidate supply, repeats, relevance or evidence), rather than silently stopping early.
+   For each: the exact article id, an integer priority 0–100, `key`,
    2–6 specific `tags`, a concrete one-sentence `why`, `evidence` (`status`, `url`, `note`), and for an update,
-   `update` and `updateNote`. You may add topic labels from the six Newsroom topics. Then, if one is worth it, add a
-   discovery pick or two (below).
+   `update` and `updateNote`. You may add topic labels from the supported topics in `newsroom.py` and `newsroom.json`.
+   Then, if one is worth it, add a discovery pick or two (below).
 6. Mark at most THREE key developments. Images don't decide importance; a key story without one stays text.
 7. Publish only with `publish_edition.py <staging path>`. It validates, archives immutably and fetches article text
    for the reader. Never edit the archives or the app by hand.
+   A user-requested expansion may set `extendsEdition` to the exact current edition ID: the publisher requires
+   every current editorial item unchanged, permits only those carry-forwards through repeat filtering, and creates
+   a new immutable expanded revision. Never use this for scheduled editions or to disguise repeats as updates.
 
 ## Widening the reader's taste
 Candidates with a `discovery` label come from a few feeds the reader didn't add, in areas next to their topics
-(`discovery.json`: science, privacy and policy, tech strategy, economics, climate tech, design, and comics). Each
+(`discovery.json`: privacy and policy, tech strategy, design and front end, and comics). Each
 edition may carry up to THREE of them, so the reader's taste can grow a little at a time; the reader decides with 👍
 and 👎.
 - Not every edition, and never filler: pick one only when it would genuinely interest someone with these topics and

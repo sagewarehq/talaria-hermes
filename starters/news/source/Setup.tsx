@@ -20,6 +20,14 @@ export const TOPICS: { name: string; icon: typeof Bot; blurb: string }[] = [
   { name: 'Developer & Engineering', icon: Code2, blurb: 'Tools, practice and infrastructure' },
   { name: 'Fintech', icon: Banknote, blurb: 'Payments, banking and money tech' },
   { name: 'Startups', icon: Rocket, blurb: 'Founders, launches and markets' },
+  { name: 'World Affairs', icon: BookOpen, blurb: 'Global events, politics and policy' },
+  { name: 'Philippines', icon: BookOpen, blurb: 'National news and regional context' },
+  { name: 'Business & Economy', icon: Banknote, blurb: 'Markets, trade and the wider economy' },
+  { name: 'Science & Space', icon: Sparkles, blurb: 'Discoveries, research and exploration' },
+  { name: 'Health', icon: ShieldCheck, blurb: 'Medicine, wellbeing and public health' },
+  { name: 'Climate & Energy', icon: Cpu, blurb: 'Environment, power and the transition' },
+  { name: 'Culture & Entertainment', icon: BookOpen, blurb: 'Film, music, books and creative life' },
+  { name: 'Sports', icon: Rocket, blurb: 'Major competitions and sporting stories' },
 ]
 
 type Suggestion = Feed & { on?: boolean }

@@ -16,7 +16,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ROOT = Path(__file__).resolve().parent
 SETTINGS = ROOT / "newsroom.json"
-TOPICS = ["Artificial Intelligence", "Technology", "Cybersecurity", "Developer & Engineering", "Fintech", "Startups"]
+TOPICS = ["Artificial Intelligence", "Technology", "Cybersecurity", "Developer & Engineering", "Fintech", "Startups",
+          "World Affairs", "Philippines", "Business & Economy", "Science & Space", "Health", "Climate & Energy",
+          "Culture & Entertainment", "Sports"]
 USER_AGENT = "TalariaNewsroom/1.0 (RSS reader; personal reading)"
 
 

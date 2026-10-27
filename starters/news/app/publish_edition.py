@@ -44,9 +44,16 @@ def validate(edition,data):
 def leave_out_repeats(edition,data,recent):
  """An edition carries what's new: a story that ran in an edition from the last 72 hours (newsroom.recently_published,
  by id or by its URL) is left out, unless the editor marked it an update with what changed. The stories left out."""
- by_id={a['id']:a for a in data['articles']};kept=[];left=[]
+ by_id={a['id']:a for a in data['articles']};kept=[];left=[];carry={}
+ if edition.get('extendsEdition'):
+  current=json.loads((ROOT/'editorial.json').read_text())
+  assert edition['extendsEdition']==current.get('editionId'),'Expansion must reference the current edition'
+  carry={i['id']:i for i in current['items']}
+  selected={i['id']:i for i in edition['items']}
+  assert all(selected.get(key)==value for key,value in carry.items()),'Expansion must preserve all current stories unchanged'
+  assert set(selected)-set(carry),'Expansion must add at least one new story'
  for item in edition['items']:
-  if newsroom.ran(by_id[item['id']],recent) and not item.get('update'): left.append(item['id'])
+  if item['id'] not in carry and newsroom.ran(by_id[item['id']],recent) and not item.get('update'): left.append(item['id'])
   else: kept.append(item)
  edition['items']=kept
  if left: edition['repeatsLeftOut']=len(left)

@@ -1,5 +1,5 @@
 name: talaria
-version: 0.10.0
+version: 0.10.1
 description: "Server-side companion for the Talaria iPhone app: records each session's attention state (running, waiting on an approval or question, needs you) across every Hermes backend, and serves it via /talaria; the app and routine skills (/talaria:app, /talaria:routine); each app's own SQLite database (db.py); build.py, which builds apps from one Vite + React workspace; and preview.py, which shows an app at phone size so Hermes can check it."
 author: "Sageware Solutions Inc."
 provides_tools:

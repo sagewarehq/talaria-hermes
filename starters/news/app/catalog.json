@@ -102,5 +102,57 @@
       "url": "https://sifted.eu/feed",
       "title": "Sifted"
     }
+  ],
+  "World Affairs": [
+    {
+      "title": "BBC World",
+      "url": "https://feeds.bbci.co.uk/news/world/rss.xml"
+    }
+  ],
+  "Business & Economy": [
+    {
+      "title": "BBC Business",
+      "url": "https://feeds.bbci.co.uk/news/business/rss.xml"
+    }
+  ],
+  "Science & Space": [
+    {
+      "title": "BBC Science",
+      "url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"
+    }
+  ],
+  "Health": [
+    {
+      "title": "BBC Health",
+      "url": "https://feeds.bbci.co.uk/news/health/rss.xml"
+    }
+  ],
+  "Climate & Energy": [
+    {
+      "title": "Guardian Environment",
+      "url": "https://www.theguardian.com/environment/rss"
+    }
+  ],
+  "Culture & Entertainment": [
+    {
+      "title": "BBC Culture",
+      "url": "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml"
+    }
+  ],
+  "Philippines": [
+    {
+      "title": "Inquirer",
+      "url": "https://newsinfo.inquirer.net/feed"
+    },
+    {
+      "title": "Philstar",
+      "url": "https://www.philstar.com/rss/headlines"
+    }
+  ],
+  "Sports": [
+    {
+      "title": "BBC Sport",
+      "url": "https://feeds.bbci.co.uk/sport/rss.xml"
+    }
   ]
 }
