@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS attention (
     updated      REAL NOT NULL,
     writer_pid   INTEGER,
     writer_start REAL,
-    dismissed_turn TEXT                  -- turn_id the user dismissed; a new turn raises it again
+    dismissed_turn TEXT,                 -- turn_id the user dismissed; a new turn raises it again
+    profile      TEXT                    -- the Hermes profile the session lives in; NULL/'' = the root's own
 );
 """
 
@@ -35,11 +36,33 @@ LIVE_STATES = {"running", "approval", "question"}
 
 
 def home() -> Path:
+    """Hermes's root (~/.hermes), never a profile's: one store for every profile, so a turn in one
+    finds the phones, page hand-offs and voice flags the default one wrote (a gateway serving several
+    profiles runs each turn with that profile's home)."""
     try:
-        from hermes_constants import get_hermes_home
-        return Path(get_hermes_home())
+        from hermes_constants import get_default_hermes_root
+        return Path(get_default_hermes_root())
     except Exception:
         return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+
+
+def current_profile() -> str:
+    """The profile this turn runs in: "" for the root's own, else its name under profiles/."""
+    try:
+        from hermes_constants import get_hermes_home
+        here = Path(get_hermes_home()).resolve()
+    except Exception:
+        return ""
+    root = home().resolve()
+    if here == root:
+        return ""
+    return here.name if here.parent == root / "profiles" else str(here)
+
+
+def profile_home(profile: Optional[str]) -> Path:
+    if not profile:
+        return home()
+    return Path(profile) if os.path.isabs(profile) else home() / "profiles" / profile
 
 
 def db_path() -> Path:
@@ -53,6 +76,8 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=2000")
     conn.executescript(SCHEMA)
+    if "profile" not in {r[1] for r in conn.execute("PRAGMA table_info(attention)")}:
+        conn.execute("ALTER TABLE attention ADD COLUMN profile TEXT")  # a store from before profiles
     return conn
 
 
@@ -90,13 +115,15 @@ def set_state(session_id: str, state: str, *, reason: Optional[str] = None, turn
         row = c.execute("SELECT reason, turn_id, platform FROM attention WHERE session_id=?", (session_id,)).fetchone()
         prev_reason, prev_turn, prev_platform = row if row else (None, None, None)
         c.execute(
-            "INSERT INTO attention (session_id, state, reason, turn_id, platform, updated, writer_pid, writer_start)"
-            " VALUES (?,?,?,?,?,?,?,?)"
+            "INSERT INTO attention (session_id, state, reason, turn_id, platform, updated, writer_pid, writer_start, profile)"
+            " VALUES (?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(session_id) DO UPDATE SET state=excluded.state, reason=excluded.reason,"
             " turn_id=excluded.turn_id, platform=excluded.platform, updated=excluded.updated,"
-            " writer_pid=excluded.writer_pid, writer_start=excluded.writer_start",
+            " writer_pid=excluded.writer_pid, writer_start=excluded.writer_start,"
+            # A session stays in its profile; a write from a thread outside the turn knows none.
+            " profile=COALESCE(NULLIF(excluded.profile, ''), attention.profile)",
             (session_id, state, prev_reason if keep_reason else reason, turn_id or prev_turn,
-             platform or prev_platform, time.time(), os.getpid(), own_start_time()))
+             platform or prev_platform, time.time(), os.getpid(), own_start_time(), current_profile()))
         if new_turn:
             c.execute("UPDATE attention SET dismissed_turn=NULL WHERE session_id=?", (session_id,))
     finally:
@@ -137,10 +164,37 @@ def dismiss(session_id: str, turn_id: Optional[str] = None, conn: Optional[sqlit
             c.close()
 
 
-def _session_meta(ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Title / cwd / source / parent (a subagent's spawning session) from Hermes's state.db,
-    read-only and best-effort."""
-    path = home() / "state.db"
+def profile_of(session_id: str, conn: Optional[sqlite3.Connection] = None) -> str:
+    """The profile a tracked session lives in ("" for the root's own)."""
+    own = conn is None
+    try:
+        c = conn or connect()
+    except Exception:
+        return ""
+    try:
+        row = c.execute("SELECT profile FROM attention WHERE session_id=?", (session_id,)).fetchone()
+        return (row[0] or "") if row else ""
+    except Exception:
+        return ""
+    finally:
+        if own:
+            c.close()
+
+
+def _session_meta(ids: list[str], profiles: Optional[dict[str, str]] = None) -> dict[str, dict[str, Any]]:
+    """Title / cwd / source / parent (a subagent's spawning session) from each session's profile's
+    state.db, read-only and best-effort. ``profiles``: session id -> profile (else looked up)."""
+    by_profile: dict[str, list[str]] = {}
+    for sid in ids:
+        p = profiles[sid] if profiles is not None and sid in profiles else profile_of(sid)
+        by_profile.setdefault(p, []).append(sid)
+    out: dict[str, dict[str, Any]] = {}
+    for p, group in by_profile.items():
+        out.update(_state_meta(profile_home(p) / "state.db", group))
+    return out
+
+
+def _state_meta(path: Path, ids: list[str]) -> dict[str, dict[str, Any]]:
     if not ids or not path.exists():
         return {}
     try:
@@ -168,13 +222,13 @@ def inbox(conn: Optional[sqlite3.Connection] = None, *, max_age_s: float = 3 * 8
     c = conn or connect()
     try:
         rows = c.execute(
-            "SELECT session_id, state, reason, turn_id, platform, updated, writer_pid, writer_start, dismissed_turn"
+            "SELECT session_id, state, reason, turn_id, platform, updated, writer_pid, writer_start, dismissed_turn, profile"
             " FROM attention WHERE updated > ? ORDER BY updated DESC", (time.time() - max_age_s,)).fetchall()
     finally:
         if own:
             c.close()
     out = []
-    for sid, state, reason, turn_id, platform, updated, pid, start, dismissed in rows:
+    for sid, state, reason, turn_id, platform, updated, pid, start, dismissed, profile in rows:
         if dismissed is not None and dismissed == (turn_id or ""):
             continue
         if state in LIVE_STATES:
@@ -187,8 +241,8 @@ def inbox(conn: Optional[sqlite3.Connection] = None, *, max_age_s: float = 3 * 8
         elif state != "needs_you":
             continue
         out.append({"session_id": sid, "state": state, "reason": reason, "turn_id": turn_id,
-                    "platform": platform, "updated": updated, "writer_pid": pid})
-    meta = _session_meta([r["session_id"] for r in out])
+                    "platform": platform, "updated": updated, "writer_pid": pid, "profile": profile or ""})
+    meta = _session_meta([r["session_id"] for r in out], {r["session_id"]: r["profile"] for r in out})
     for r in out:
         r.update(meta.get(r["session_id"], {}))
     return [r for r in out if not (r["state"] == "done" and r.get("source") == "cron")]
@@ -208,7 +262,7 @@ def known(conn: Optional[sqlite3.Connection] = None, *, max_age_s: float = 3 * 8
 
 def last_assistant_text(session_id: str) -> str:
     """The session's latest non-empty assistant message from state.db (flushed before turn end)."""
-    path = home() / "state.db"
+    path = profile_home(profile_of(session_id)) / "state.db"
     try:
         c = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
         row = c.execute("SELECT content FROM messages WHERE session_id=? AND role='assistant' AND content IS NOT NULL"

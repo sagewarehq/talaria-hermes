@@ -26,9 +26,10 @@ from . import push, store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 # What the clients can ask of it; they offer an update below what they need. 2: catalog and install. 3: push.
-API = 3
+# 4: inbox rows and pushes name their profile.
+API = 4
 
 
 def _safe(fn):
@@ -298,7 +299,7 @@ def post_approval_response(session_id: str = "", **_: Any) -> None:
 
 @_safe
 def on_human_input_request(session_id: str = "", kind: str = "", prompt: str = "", **_: Any) -> None:
-    # Secrets and sudo passwords also come through here; never record their prompt text.
+    # Secrets and admin passwords also come through here; never record their prompt text.
     reason = (prompt or "").strip()[:300] if kind in ("clarify", "question") else kind or "input"
     store.set_state(session_id, "question", reason=reason)
     push.notify(session_id, "question", reason)

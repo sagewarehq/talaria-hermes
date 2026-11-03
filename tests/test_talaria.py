@@ -1085,7 +1085,7 @@ def test_catalog_lists_the_starters_with_their_state(talaria, tmp_path, monkeypa
     (home / "starters.json").write_text(json.dumps({"news": "skipped: already there"}))
     assert news()["state"] == "taken" and "already have" in json.loads(talaria.handle_command("install news"))["error"]
     assert "doesn't ship" in json.loads(talaria.handle_command("install nope"))["error"]
-    assert json.loads(talaria.handle_command("version"))["api"] == 3
+    assert json.loads(talaria.handle_command("version"))["api"] == 4
 
 
 def test_app_db_migrates_and_answers_the_page(talaria, tmp_path):
@@ -1283,3 +1283,37 @@ def test_push_dead_phone_is_forgotten(talaria, monkeypatch):
     talaria.handle_command(f"push register https://push.example.com {HANDLE} {SEND} {KEY}")
     assert json.loads(talaria.handle_command(f"push test {HANDLE}")) == {"ok": False, "status": 410}
     assert json.loads(talaria.handle_command("push status"))["devices"] == []
+
+
+def test_rows_carry_their_profile(talaria, monkeypatch, tmp_path):
+    # A turn in another profile (a gateway serving several runs it under that profile's home).
+    import sqlite3
+    home = tmp_path / "profiles" / "personal"
+    home.mkdir(parents=True)
+    db = sqlite3.connect(home / "state.db")
+    db.execute("CREATE TABLE sessions (id TEXT, title TEXT, cwd TEXT, source TEXT, parent_session_id TEXT)")
+    db.execute("INSERT INTO sessions VALUES ('p1', 'Plan the trip', '/root', 'desktop', NULL)")
+    db.commit(); db.close()
+    monkeypatch.setattr(talaria.store, "current_profile", lambda: "personal")
+    talaria.on_session_start(session_id="p1", platform="desktop")
+    talaria.pre_approval_request(session_id="p1", command="rm x", description="Delete x", turn_id="t1")
+    # A write from outside the turn (the classifier's thread) knows no profile: the row keeps its own.
+    monkeypatch.setattr(talaria.store, "current_profile", lambda: "")
+    talaria.store.set_state("p1", "approval", reason="Delete x", turn_id="t1")
+    talaria.on_session_start(session_id="d1", platform="desktop")
+    rows = {r["session_id"]: r for r in inbox(talaria)}
+    assert rows["p1"]["profile"] == "personal" and rows["p1"]["title"] == "Plan the trip"  # from that profile's state.db
+    assert rows["d1"]["profile"] == ""
+    assert talaria.store.profile_of("p1") == "personal"
+
+
+def test_current_profile_follows_the_turns_home(talaria, tmp_path):
+    hc = pytest.importorskip("hermes_constants")
+    if not hasattr(hc, "set_hermes_home_override"):
+        pytest.skip("no per-turn home override in this Hermes")
+    assert talaria.store.current_profile() == ""
+    token = hc.set_hermes_home_override(str(tmp_path / "profiles" / "personal"))
+    try:
+        assert talaria.store.current_profile() == "personal"
+    finally:
+        hc.reset_hermes_home_override(token)

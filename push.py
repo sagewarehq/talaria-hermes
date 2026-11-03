@@ -208,6 +208,8 @@ def _notify(session_id: str, kind: str, reason: Optional[str], turn_id: Optional
         meta = store._session_meta([session_id]).get(session_id, {})
         message = {"v": 1, "k": kind, "s": session_id, "title": meta.get("title") or "", "r": (reason or "")[:300],
                    "p": os.path.basename((meta.get("cwd") or "").rstrip("/")), "n": _badge()}
+        if profile := store.profile_of(session_id):  # so a tap opens it in its profile
+            message["pf"] = profile
         for handle, relay, send_key, key, last in devices:
             if last and time.time() - last < SEEN_FRESH:
                 continue
