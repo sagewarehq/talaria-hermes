@@ -1085,7 +1085,7 @@ def test_catalog_lists_the_starters_with_their_state(talaria, tmp_path, monkeypa
     (home / "starters.json").write_text(json.dumps({"news": "skipped: already there"}))
     assert news()["state"] == "taken" and "already have" in json.loads(talaria.handle_command("install news"))["error"]
     assert "doesn't ship" in json.loads(talaria.handle_command("install nope"))["error"]
-    assert json.loads(talaria.handle_command("version"))["api"] == 2
+    assert json.loads(talaria.handle_command("version"))["api"] == 3
 
 
 def test_app_db_migrates_and_answers_the_page(talaria, tmp_path):
@@ -1214,3 +1214,72 @@ def test_voice_chat_asks_for_a_spoken_answer(talaria):
     talaria.handle_command("voice v1 off")
     assert talaria.pre_llm_call(session_id="v1", turn_id="t3", platform="tui") is None
     assert json.loads(talaria.handle_command("voice ../x on"))["ok"] is False
+
+
+# MARK: push
+
+KEY = "A" * 43  # base64url of 32 zero-ish bytes
+HANDLE, SEND = "h" * 22, "s" * 43
+
+
+def _sent(talaria, monkeypatch, code=202):
+    calls = []
+    monkeypatch.setattr(talaria.push, "_post", lambda relay, handle, key, blob: calls.append((relay, handle, blob)) or code)
+    return calls
+
+
+def _wait(talaria):
+    for t in list(talaria.push._pending):
+        t.join(timeout=5)
+
+
+def _open(blob, key=KEY):
+    import base64
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    raw = base64.b64decode(blob)
+    k = base64.urlsafe_b64decode(key + "=")
+    return AESGCM(k).decrypt(raw[:12], raw[12:], b"talaria-push-v1")
+
+
+def test_push_register_checks_its_arguments(talaria):
+    ok = json.loads(talaria.handle_command(f"push register https://push.example.com {HANDLE} {SEND} {KEY}"))
+    assert ok == {"ok": True}
+    assert not json.loads(talaria.handle_command(f"push register http://push.example.com {HANDLE} {SEND} {KEY}"))["ok"]
+    assert not json.loads(talaria.handle_command(f"push register https://push.example.com {HANDLE} {SEND} short"))["ok"]
+    assert json.loads(talaria.handle_command("push status"))["devices"][0]["handle"] == HANDLE[:6]
+    assert json.loads(talaria.handle_command(f"push forget {HANDLE}")) == {"ok": True}
+    assert json.loads(talaria.handle_command("push status"))["devices"] == []
+
+
+def test_push_blob_is_one_size_and_opens_with_the_key(talaria):
+    short = talaria.push.seal(KEY, {"v": 1, "k": "approval", "s": "s1", "r": "ls"})
+    long = talaria.push.seal(KEY, {"v": 1, "k": "approval", "s": "s1", "r": "x" * 2000, "title": "é" * 400})
+    assert len(short) == len(long)
+    msg = json.loads(_open(long))
+    assert msg["k"] == "approval" and msg["s"] == "s1" and msg["r"].endswith("…")
+
+
+def test_push_once_per_event_and_not_while_the_phone_looks(talaria, monkeypatch):
+    calls = _sent(talaria, monkeypatch)
+    talaria.handle_command(f"push register https://push.example.com {HANDLE} {SEND} {KEY}")  # counts as seen
+    talaria.pre_approval_request(session_id="s1", command="rm -rf build", turn_id="t1")
+    _wait(talaria)
+    assert calls == []  # it just registered: the app is open
+    talaria.push._connect().execute("UPDATE devices SET seen=NULL")
+    talaria.pre_approval_request(session_id="s1", command="rm -rf dist", turn_id="t1")
+    talaria.pre_approval_request(session_id="s1", command="rm -rf dist", turn_id="t1")  # another backend, same event
+    _wait(talaria)
+    assert len(calls) == 1 and calls[0][:2] == ("https://push.example.com", HANDLE)
+    msg = json.loads(_open(calls[0][2]))
+    assert msg["k"] == "approval" and msg["r"] == "rm -rf dist" and msg["n"] == 1
+    talaria.handle_command(f"inbox --json --seen {HANDLE}")
+    talaria.on_human_input_request(session_id="s2", kind="clarify", prompt="Which branch?")
+    _wait(talaria)
+    assert len(calls) == 1
+
+
+def test_push_dead_phone_is_forgotten(talaria, monkeypatch):
+    _sent(talaria, monkeypatch, code=410)
+    talaria.handle_command(f"push register https://push.example.com {HANDLE} {SEND} {KEY}")
+    assert json.loads(talaria.handle_command(f"push test {HANDLE}")) == {"ok": False, "status": 410}
+    assert json.loads(talaria.handle_command("push status"))["devices"] == []

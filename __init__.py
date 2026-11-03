@@ -22,13 +22,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import store
+from . import push, store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.10.1"
-# What the clients can ask of it; they offer an update below what they need. 2: catalog and install.
-API = 2
+VERSION = "0.11.0"
+# What the clients can ask of it; they offer an update below what they need. 2: catalog and install. 3: push.
+API = 3
 
 
 def _safe(fn):
@@ -253,6 +253,7 @@ def _classify_turn(session_id: str, turn_id: str) -> None:
         _note(f"{session_id[:16]} needs_you={needs}")
         if needs:
             store.set_state(session_id, "needs_you", reason=nxt or "Reply to Hermes", turn_id=turn_id or None)
+            push.notify(session_id, "needs_you", nxt or "Reply to Hermes", turn_id)
     except Exception as e:
         _note(f"{session_id[:16]} error {type(e).__name__}: {str(e)[:200]}")
 
@@ -286,6 +287,7 @@ def parse_verdict(raw: str) -> tuple[bool, str] | None:
 def pre_approval_request(session_id: str = "", command: str = "", description: str = "", turn_id: str = "", **_: Any) -> None:
     what = (description or command or "an action").strip()
     store.set_state(session_id, "approval", reason=what[:300], turn_id=turn_id or None)
+    push.notify(session_id, "approval", what[:300], turn_id)
 
 
 @_safe
@@ -299,6 +301,7 @@ def on_human_input_request(session_id: str = "", kind: str = "", prompt: str = "
     # Secrets and sudo passwords also come through here; never record their prompt text.
     reason = (prompt or "").strip()[:300] if kind in ("clarify", "question") else kind or "input"
     store.set_state(session_id, "question", reason=reason)
+    push.notify(session_id, "question", reason)
 
 
 @_safe
@@ -309,7 +312,8 @@ def on_human_input_resolved(session_id: str = "", **_: Any) -> None:
 
 USAGE = ("usage: /talaria version | whoami | inbox [--json] | apps | open <app> [--via <host>] | action <app> <name> [base64 json]"
          " | catalog | install <app> | db-check | app-icon <app> <icon|none> | pin <app> | unpin <app>"
-         " | page <session_id> <base64 json> | voice <session_id> on|off | dismiss <session_id> [turn_id] | classify <session_id>")
+         " | page <session_id> <base64 json> | voice <session_id> on|off | dismiss <session_id> [turn_id] | classify <session_id>"
+         " | push register <relay> <handle> <send_key> <key> | push forget <handle> | push test <handle> | push status")
 
 
 def list_apps() -> list[dict[str, Any]]:
@@ -371,6 +375,8 @@ def handle_command(raw_args: str = "") -> str:
     if sub == "whoami":
         return store.to_json({"pid": os.getpid(), "start": store.own_start_time()})
     if sub == "inbox":
+        if "--seen" in args[:-1]:  # the phone's poll, with its push handle: it's open, so don't push it
+            push.seen(args[args.index("--seen") + 1])
         rows = store.inbox()
         if "--json" in args:
             return store.to_json({"rows": rows, "pid": os.getpid(), "known": store.known()})
@@ -428,6 +434,13 @@ def handle_command(raw_args: str = "") -> str:
         return store.to_json(actions.db_module().check())
     if sub == "dismiss" and len(args) in (2, 3):
         return store.to_json({"dismissed": store.dismiss(args[1], args[2] if len(args) == 3 else None)})
+    if sub == "push" and len(args) >= 2:  # notifications through the Talaria relay, end to end encrypted (push.py)
+        if args[1] == "register" and len(args) == 6:
+            return store.to_json(push.register(*args[2:]))
+        if args[1] in ("forget", "test") and len(args) == 3:
+            return store.to_json(push.forget(args[2]) if args[1] == "forget" else push.test(args[2]))
+        if args[1] == "status":
+            return store.to_json(push.status())
     if sub == "classify" and len(args) == 2:  # debugging: run the needs-you check on a session now
         try:
             return store.to_json({"verdict": classify(store.last_assistant_text(args[1]))})
