@@ -43,7 +43,8 @@ def home() -> Path:
         from hermes_constants import get_default_hermes_root
         return Path(get_default_hermes_root())
     except Exception:
-        return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+        home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+        return home.parent.parent if home.parent.name == "profiles" else home
 
 
 def current_profile() -> str:

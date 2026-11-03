@@ -11,6 +11,7 @@ raises.
 from __future__ import annotations
 
 import atexit
+import contextvars
 import hashlib
 import json
 import logging
@@ -26,7 +27,7 @@ from . import push, store
 
 logger = logging.getLogger(__name__)
 
-VERSION = "0.12.0"
+VERSION = "0.12.2"
 # What the clients can ask of it; they offer an update below what they need. 2: catalog and install. 3: push.
 # 4: inbox rows and pushes name their profile.
 API = 4
@@ -188,7 +189,10 @@ def on_session_end(session_id: str = "", turn_id: str = "", platform: str = "", 
         return
     store.set_state(session_id, "idle", turn_id=turn_id, platform=platform)
     if completed and not failed and not interrupted and classify_enabled():
-        t = threading.Thread(target=_classify_turn, args=(session_id, turn_id), daemon=True, name="talaria-classify")
+        # In the turn's context: a gateway serving several profiles reads the model's key only inside the
+        # turn's profile scope (a context variable), and a bare thread starts without it (UnscopedSecretError).
+        ctx = contextvars.copy_context()
+        t = threading.Thread(target=ctx.run, args=(_classify_turn, session_id, turn_id), daemon=True, name="talaria-classify")
         _pending.append(t)
         t.start()
 

@@ -42,6 +42,17 @@ class Failed(Exception):
     pass
 
 
+def hermes_root() -> Path:
+    """Hermes's root (~/.hermes), never a profile's: Talaria's apps are one set per server, so an app built
+    or previewed in a profile's turn (whose HERMES_HOME is profiles/<name>) lands where Apps lists it."""
+    try:
+        from hermes_constants import get_default_hermes_root
+        return Path(get_default_hermes_root())
+    except Exception:
+        home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+        return home.parent.parent if home.parent.name == "profiles" else home
+
+
 def path(apps_root: Path, app: str) -> Path:
     return apps_root / app / "app.db"
 
@@ -195,7 +206,7 @@ def check() -> dict:
     import shutil
     import subprocess
     here = Path(__file__).resolve().parent
-    home = Path(os.environ.get("TALARIA_HOME") or Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes") / "talaria")
+    home = Path(os.environ.get("TALARIA_HOME") or hermes_root() / "talaria")
     system = {"os": platform.system(), "machine": platform.machine(), "release": platform.release()}
     try:
         fields = dict(l.split("=", 1) for l in Path("/etc/os-release").read_text().splitlines() if "=" in l)
@@ -247,7 +258,7 @@ def main(argv: list[str]) -> int:
     if not argv or len(argv) > 2:
         print(__doc__.strip().split("\n\n")[-1], file=sys.stderr)
         return 2
-    home = Path(os.environ.get("TALARIA_HOME") or Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes") / "talaria")
+    home = Path(os.environ.get("TALARIA_HOME") or hermes_root() / "talaria")
     root = home / "apps"
     if len(argv) == 2:
         print(query(root, argv[0], json.dumps({"sql": argv[1]}).encode()))

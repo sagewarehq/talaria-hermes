@@ -1317,3 +1317,38 @@ def test_current_profile_follows_the_turns_home(talaria, tmp_path):
         assert talaria.store.current_profile() == "personal"
     finally:
         hc.reset_hermes_home_override(token)
+
+
+def test_apps_live_at_the_root_whatever_profile_builds_them(talaria, tmp_path, monkeypatch):
+    # A profile's turn runs its tools with HERMES_HOME=<root>/profiles/<name>; its apps still go where Apps lists them.
+    from talaria_plugin import build, db, preview
+    (tmp_path / "config.yaml").write_text("")  # marks tmp_path as a Hermes root
+    personal = tmp_path / "profiles" / "personal"
+    personal.mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(personal))
+    monkeypatch.delenv("TALARIA_HOME", raising=False)
+    for mod in (build, db, preview):
+        assert mod.hermes_root().resolve() == tmp_path.resolve()
+    assert build.talaria_home().resolve() == (tmp_path / "talaria").resolve()
+    assert preview.apps_root().resolve() == (tmp_path / "talaria" / "apps").resolve()
+
+
+def test_classifier_runs_in_the_turns_context(talaria, monkeypatch):
+    # A multi-profile gateway keeps the turn's secret scope in a context variable; the classifier reads the
+    # model's key, so its thread must carry that context (else UnscopedSecretError, and no "needs you").
+    import contextvars
+    scope = contextvars.ContextVar("scope", default=None)
+    seen = []
+    monkeypatch.setattr(talaria.store, "last_assistant_text", lambda sid: "Draft is ready. Send it to the client when you've checked it.")
+    monkeypatch.setattr(talaria, "classify", lambda text: seen.append(scope.get()) or (True, "Send the draft"))
+    talaria.on_session_start(session_id="s8")
+    token = scope.set("personal")
+    try:
+        talaria.on_session_end(session_id="s8", turn_id="t1", completed=True)
+    finally:
+        scope.reset(token)
+    for th in __import__("threading").enumerate():
+        if th.name == "talaria-classify":
+            th.join(5)
+    assert seen == ["personal"]
+    assert inbox(talaria)[0]["state"] == "needs_you"

@@ -98,13 +98,19 @@ def phone_url(name: str, page: str = "") -> str:
     return f"http://{name}.localhost:{PORT}/__phone/{page}"
 
 
-def apps_root() -> Path:
+def hermes_root() -> Path:
+    """Hermes's root (~/.hermes), never a profile's: Talaria's apps are one set per server, so an app built
+    or previewed in a profile's turn (whose HERMES_HOME is profiles/<name>) lands where Apps lists it."""
     try:
-        from hermes_constants import get_hermes_home
-        home = Path(get_hermes_home())
+        from hermes_constants import get_default_hermes_root
+        return Path(get_default_hermes_root())
     except Exception:
         home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
-    return home / "talaria" / "apps"
+        return home.parent.parent if home.parent.name == "profiles" else home
+
+
+def apps_root() -> Path:
+    return hermes_root() / "talaria" / "apps"
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
