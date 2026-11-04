@@ -259,6 +259,50 @@ def test_app_icons_and_pins_are_kept_for_every_device(talaria, monkeypatch):
     assert "rocket" in json.loads(talaria.handle_command("apps"))["icons"]
 
 
+def test_an_app_can_wear_its_own_image(talaria, monkeypatch):
+    """meta.icon, an image in the app's folder, is a fully custom icon: picked as ``image``, or the app's own glyph."""
+    import base64
+    from talaria_plugin import appserver
+    ws = talaria.store.home() / "talaria" / "workspace" / "apps"
+    for name, meta in (("news", "glyph: 'image', icon: './favicon.svg'"), ("notes", "glyph: 'book'"),
+                       ("sneaky", "glyph: 'book', icon: '../news/favicon.svg'")):
+        (ws / name).mkdir(parents=True)
+        (ws / name / "App.tsx").write_text(f"export const meta = {{ title: 'X', {meta} }}\nexport default () => null")
+    data = talaria.store.home() / "talaria" / "apps" / "news"
+    data.mkdir(parents=True)
+    (data / "favicon.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+    monkeypatch.setattr(appserver, "runs", lambda name: True)
+    apps = lambda: {a["name"]: (a["icon"], bool(a["image"])) for a in json.loads(talaria.handle_command("apps"))["apps"]}
+    assert apps() == {"news": ("image", True), "notes": ("book", False), "sneaky": ("book", False)}  # not outside its folder
+
+    got = json.loads(talaria.handle_command("app-image news"))
+    assert got["type"] == "image/svg+xml" and base64.b64decode(got["data"]).startswith(b"<svg")
+    drawn = json.loads(talaria.handle_command("app-image news --png"))  # a PNG where Chromium is, else the SVG
+    assert base64.b64decode(drawn["data"]).startswith(b"\x89PNG" if drawn["type"] == "image/png" else b"<svg")
+    assert "error" in json.loads(talaria.handle_command("app-image notes"))
+    assert "error" in json.loads(talaria.handle_command("app-image ../news"))
+    assert "error" in json.loads(talaria.handle_command("app-icon notes image"))  # it has none
+    assert json.loads(talaria.handle_command("app-icon news rss"))["icon"] == "rss"
+    assert json.loads(talaria.handle_command("app-icon news image"))["icon"] == "image"
+    (data / "favicon.svg").unlink()  # gone: back to the kit
+    assert apps()["news"] == (None, False)
+
+
+def test_app_colors_are_kept_beside_icons(talaria):
+    root = talaria.store.home() / "talaria" / "apps" / "trips"
+    root.mkdir(parents=True)
+    (root / "index.html").write_text("<title>x</title>")
+    color = lambda: json.loads(talaria.handle_command("apps"))["apps"][0]["color"]
+    assert color() is None and "teal" in json.loads(talaria.handle_command("apps"))["colors"]
+    assert json.loads(talaria.handle_command("app-color trips teal")) == {"name": "trips", "color": "teal"}
+    assert "error" in json.loads(talaria.handle_command("app-color trips chartreuse"))  # not a swatch
+    assert "error" in json.loads(talaria.handle_command("app-color ../x teal"))
+    talaria.handle_command("app-icon trips calendar")  # an icon from the wider kit, and the color stays
+    assert color() == "teal" and json.loads(talaria.handle_command("apps"))["apps"][0]["icon"] == "calendar"
+    talaria.handle_command("app-color trips none")
+    assert color() is None
+
+
 def test_open_serves_an_app_on_its_own_port(talaria):
     import urllib.request
     app = talaria.store.home() / "talaria" / "apps" / "trips"

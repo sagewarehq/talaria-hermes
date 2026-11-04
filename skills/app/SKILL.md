@@ -87,13 +87,31 @@ export default function App() { … }
 ```
 
 `meta.title` is the app's name in Talaria; keep it short. `glyph` is its icon in Talaria's lists and sidebars, one
-of: folder-library, repo, rocket, beaker, flame, star-full, heart, zap, target, lightbulb, tools, device-desktop,
-device-mobile, terminal, dashboard, globe, broadcast, cloud, database, package, book, organization, bug, shield, key,
-gift, telescope, home. Every app has one: `--new <name> <icon>` won't start an app without it, so pick the one that
-fits best (a tracker of money or metrics: `dashboard`; people: `organization`; reading: `book`; news: `broadcast`).
-A migrated app, or one from before icons, gets one added to its `meta` the next time you touch it. The user can
-pick another in Talaria, which wins over `glyph`. `icon` is an image in the app's data folder (the page's favicon),
-and `theme` the browser chrome's colour; both are optional.
+of these (codicon names):
+
+- people and talk: person, account, organization, mention, comment-discussion, mail, inbox, call-outgoing, megaphone,
+  bell, rss, broadcast, radio-tower
+- time and tasks: calendar, clock, history, milestone, checklist, tasklist, target, flag
+- writing and files: note, notebook, pencil, book, folder-library, file-text, files, archive, bookmark, tag, repo,
+  package
+- money and numbers: briefcase, credit-card, percentage, dashboard, graph, graph-line, pie-chart, pulse, table,
+  database
+- places and life: home, globe, map, location, compass, telescope, coffee, game, jersey, smiley, thumbsup, heart,
+  gift, mortar-board
+- media and making: music, piano, mic, play-circle, device-camera, device-camera-video, file-media, symbol-color,
+  paintcan, sparkle, wand, lightbulb, thinking, beaker, microscope, rocket, flame, star-full, zap
+- tech: code, terminal, git-branch, extensions, tools, gear, layers, server, chip, cloud, plug, keyboard,
+  device-desktop, device-mobile, link, sync, search, eye, bug
+- safety: shield, lock, key, verified
+
+Every app has one: `--new <name> <icon>` won't start an app without it, so pick the one that fits best (money spent:
+`credit-card`; metrics: `dashboard` or `graph-line`; people: `organization`; reading: `book`; news: `rss`; food:
+`coffee`; a plan by date: `calendar`). A migrated app, or one from before icons, gets one added to its `meta` the next
+time you touch it. The user can pick another in Talaria, which wins over `glyph`, and give it a color there too.
+`icon` is an image in the app's data folder (the page's favicon), and `theme` the browser chrome's colour; both are
+optional. An app whose `icon` is a finished app icon (a square SVG or PNG under 256 KB, drawn edge to edge on its own
+background, legible at 40 pt) can wear it in Talaria too: `glyph: 'image'`, or the user picks it there. Draw one only
+when the user asks for a custom icon; otherwise a glyph from the list is the icon.
 
 ## Pages and state
 

@@ -247,8 +247,59 @@ def title(name: str) -> str | None:
     return meta(name, "title")
 
 
+IMAGE_TYPES = {".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".webp": "image/webp"}
+
+
+def image(name: str) -> Path | None:
+    """The app's own icon image, ``meta.icon`` in its data folder: an SVG, PNG, JPEG or WebP of 256 KB at most, which
+    Talaria can show as a fully custom icon (appprefs.IMAGE)."""
+    icon = meta(name, "icon")
+    if not icon:
+        return None
+    folder = (home() / "apps" / name).resolve()
+    path = (folder / icon).resolve()
+    if not path.is_relative_to(folder) or path.suffix.lower() not in IMAGE_TYPES:
+        return None
+    try:
+        return path if path.is_file() and path.stat().st_size <= 256_000 else None
+    except OSError:
+        return None
+
+
+def image_png(path: Path, side: int = 256) -> bytes | None:
+    """An SVG image drawn as a PNG, ``side`` px square, by the headless Chromium Playwright keeps (Hermes's browser
+    tool), kept beside the app's other files by its contents; None without one. Clients that can't draw an SVG (the
+    iPhone) get this instead."""
+    import base64
+    import glob
+    import tempfile
+    data = path.read_bytes()
+    cache = home() / "app-images" / f"{hashlib.sha1(data).hexdigest()[:16]}-{side}.png"
+    if cache.is_file():
+        return cache.read_bytes()
+    shells = sorted(glob.glob(str(Path.home() / ".cache/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell")))
+    if not shells:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        page, out = Path(tmp) / "icon.html", Path(tmp) / "icon.png"
+        page.write_text('<html><body style="margin:0;background:transparent"><img style="width:100vw;height:100vh;'
+                        f'display:block" src="data:image/svg+xml;base64,{base64.b64encode(data).decode()}"></body></html>')
+        try:
+            subprocess.run([shells[-1], "--no-sandbox", "--hide-scrollbars", "--default-background-color=00000000",
+                            f"--window-size={side},{side}", f"--screenshot={out}", page.as_uri()],
+                           capture_output=True, timeout=30, cwd=tmp)
+            png = out.read_bytes()
+        except (OSError, subprocess.SubprocessError):
+            return None
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(png)
+    return png
+
+
 def meta(name: str, key: str) -> str | None:
-    """A string in the app's ``export const meta = { … }``: ``title``, or ``glyph`` (its icon, appprefs.ICONS)."""
+    """A string in the app's ``export const meta = { … }``: ``title``, ``glyph`` (its icon, appprefs.ICONS) or ``icon``
+    (its image)."""
     src = home() / "workspace" / "apps" / name
     for f in ("App.tsx", "App.jsx"):
         try:

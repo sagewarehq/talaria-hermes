@@ -316,7 +316,8 @@ def on_human_input_resolved(session_id: str = "", **_: Any) -> None:
 
 
 USAGE = ("usage: /talaria version | whoami | inbox [--json] | apps | open <app> [--via <host>] | action <app> <name> [base64 json]"
-         " | catalog | install <app> | db-check | app-icon <app> <icon|none> | pin <app> | unpin <app>"
+         " | catalog | install <app> | db-check | app-icon <app> <icon|image|none> | app-image <app> [--png]"
+         " | app-color <app> <color|none> | pin <app> | unpin <app>"
          " | page <session_id> <base64 json> | voice <session_id> on|off | dismiss <session_id> [turn_id] | classify <session_id>"
          " | push register <relay> <handle> <send_key> <key> | push forget <handle> | push test <handle> | push status")
 
@@ -390,8 +391,9 @@ def handle_command(raw_args: str = "") -> str:
         return "\n".join(f"{r['state']:<9} {r.get('title') or r['session_id']}  {r.get('reason') or ''}".rstrip() for r in rows)
     if sub == "apps":
         from . import appprefs, appserver
-        return store.to_json({"apps": appprefs.decorate(list_apps(), lambda name: appserver.meta(name, "glyph")),
-                              "icons": appprefs.ICONS})
+        return store.to_json({"apps": appprefs.decorate(list_apps(), lambda name: appserver.meta(name, "glyph"),
+                                                        appserver.image),
+                              "icons": appprefs.ICONS, "colors": appprefs.COLORS})
     if sub == "catalog":  # the Apps marketplace: the apps Talaria ships with, and whether each is here (market.py)
         from . import market
         return store.to_json(market.catalog())
@@ -399,8 +401,22 @@ def handle_command(raw_args: str = "") -> str:
         from . import market
         return store.to_json(market.install(args[1]))
     if sub == "app-icon" and len(args) == 3:  # the icon Desktop and the iPhone show for an app (appprefs.ICONS)
+        from . import appprefs, appserver
+        return store.to_json(appprefs.set_icon(args[1], args[2], appserver.image))
+    if sub == "app-image" and len(args) in (2, 3) and args[2:] in ([], ["--png"]):
+        # its own image, for an icon that's fully custom (appserver.image); --png: an SVG drawn as a PNG, if it can be
+        import base64
+        from . import appprefs, appserver
+        path = appserver.image(args[1]) if appprefs.valid(args[1]) else None
+        if not path:
+            return store.to_json({"error": f"{args[1]} has no image of its own."})
+        kind = appserver.IMAGE_TYPES[path.suffix.lower()]
+        png = appserver.image_png(path) if kind == "image/svg+xml" and "--png" in args else None
+        return store.to_json({"name": args[1], "type": "image/png" if png else kind,
+                              "data": base64.b64encode(png or path.read_bytes()).decode()})
+    if sub == "app-color" and len(args) == 3:  # the color its icon wears there (appprefs.COLORS)
         from . import appprefs
-        return store.to_json(appprefs.set_icon(args[1], args[2]))
+        return store.to_json(appprefs.set_color(args[1], args[2]))
     if sub in ("pin", "unpin") and len(args) == 2:  # an app in the sidebar, on every device
         from . import appprefs
         return store.to_json(appprefs.set_pinned(args[1], sub == "pin"))
@@ -536,4 +552,4 @@ def register(ctx) -> None:
     ctx.register_command("talaria", handler=handle_command,
                          description="Talaria attention feed: running / waiting sessions across backends.",
                          args_hint="version | whoami | inbox [--json] | apps | open <app> | action <app> <name> | dismiss <id> [turn]"
-                                   " | app-icon <app> <icon> | pin <app> | unpin <app>")
+                                   " | app-icon <app> <icon> | app-color <app> <color> | pin <app> | unpin <app>")
